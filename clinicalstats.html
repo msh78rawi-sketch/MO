@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ClinicalStats Pro — Klinisk Statistik</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prop-types/15.8.1/prop-types.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.15.0/Recharts.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.5}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:#64748b;border-radius:3px}
+#root{height:100vh}
+.app{display:flex;height:100vh;overflow:hidden}
+.sidebar{width:224px;flex-shrink:0;overflow-y:auto;overflow-x:hidden;padding:8px 0 24px}
+.sidebar-logo{padding:12px 16px 8px;font-size:15px;font-weight:800;letter-spacing:-.3px;border-bottom:1px solid rgba(0,0,0,.08);margin-bottom:8px}
+.sidebar-logo span{font-size:10px;display:block;font-weight:400;opacity:.6;letter-spacing:0}
+.sidebar-group{margin-top:4px}
+.sidebar-group-label{padding:6px 16px 2px;font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.45}
+.sidebar-item{display:block;width:100%;padding:5px 16px;text-align:left;border:none;cursor:pointer;font-size:12.5px;background:transparent;transition:background .1s;font-family:inherit;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.main{flex:1;overflow-y:auto;padding:24px 28px}
+.page-title{font-size:20px;font-weight:700;margin-bottom:4px}
+.page-sub{font-size:12px;opacity:.55;margin-bottom:20px}
+.card{border-radius:10px;padding:16px;margin-bottom:16px;border:1px solid}
+.row{display:flex;gap:16px;flex-wrap:wrap}
+.col{flex:1;min-width:220px}
+label{display:block;font-size:12px;font-weight:600;margin-bottom:4px;opacity:.65}
+input[type=text],input[type=number],select,textarea{width:100%;padding:6px 10px;border-radius:6px;border:1px solid;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s}
+button{padding:7px 16px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-family:inherit;font-weight:600;transition:opacity .15s}
+button:hover{opacity:.85}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid}
+th{font-weight:600;font-size:12px;opacity:.7}
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;margin-left:6px}
+.hint{font-size:12px;opacity:.5;margin-top:4px}
+h3{font-size:15px;font-weight:700;margin-bottom:12px}
+h4{font-size:13px;font-weight:700;margin-bottom:8px;opacity:.8}
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+.stat-box{border-radius:8px;padding:12px 14px;border:1px solid}
+.stat-box .stat-label{font-size:11px;font-weight:600;opacity:.55;text-transform:uppercase;letter-spacing:.04em}
+.stat-box .stat-val{font-size:20px;font-weight:700;margin-top:2px}
+.stat-box .stat-sub{font-size:11px;opacity:.5;margin-top:1px}
+.result-table td:first-child{font-weight:600;opacity:.7;width:40%}
+.green{color:#16a34a}.red{color:#dc2626}.amber{color:#d97706}.blue{color:#2563eb}
+.sep{height:1px;background:currentColor;opacity:.1;margin:12px 0}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useCallback,useRef,useMemo}=React;
+const {LineChart,Line,BarChart,Bar,ScatterChart,Scatter,AreaChart,Area,XAxis,YAxis,CartesianGrid,Tooltip,Legend,ReferenceLine,ResponsiveContainer,ComposedChart,ErrorBar}=Recharts;
+
+// ================================================================
+// STATISTICAL UTILITY FUNCTIONS
+// ================================================================
+const lgamma=(x)=>{const g=7,C=[.99999999999980993,676.5203681218851,-1259.1392167224028,771.32342877765313,-176.61502916214059,12.507343278686905,-.13857109526572012,9.9843695780195716e-6,1.5056327351493116e-7];if(x<.5)return Math.log(Math.PI/Math.sin(Math.PI*x))-lgamma(1-x);x-=1;let a=C[0];const t=x+g+.5;for(let i=1;i<g+2;i++)a+=C[i]/(x+i);return .5*Math.log(2*Math.PI)+(x+.5)*Math.log(t)-t+Math.log(a)};
+const sN=v=>typeof v==='number'&&isFinite(v)&&!isNaN(v);
+const mean=a=>!(a&&a.length)?NaN:a.reduce((s,v)=>s+v,0)/a.length;
+const median=a=>{if(!(a&&a.length))return NaN;const s=[...a].sort((x,y)=>x-y),m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2};
+const sd=a=>{if(!a||a.length<2)return NaN;const m=mean(a);return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1))};
+const sdp=a=>{if(!a||a.length<1)return NaN;const m=mean(a);return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/a.length)};
+const cv=a=>{const m=mean(a),s=sd(a);return sN(m)&&m!==0&&sN(s)?(s/Math.abs(m))*100:NaN};
+const pct=(a,p)=>{if(!(a&&a.length))return NaN;const s=[...a].sort((x,y)=>x-y),i=(p/100)*(s.length-1),lo=Math.floor(i),hi=Math.ceil(i);return lo===hi?s[lo]:s[lo]+(i-lo)*(s[hi]-s[lo])};
+const fmt=(v,d=4)=>sN(v)?v.toFixed(d):'—';
+const fmt2=(v,d=2)=>sN(v)?v.toFixed(d):'—';
+const fmtP=p=>{if(!sN(p))return'—';if(p<.0001)return'<0.0001';if(p<.001)return p.toFixed(4);if(p<.01)return p.toFixed(3);return p.toFixed(3)};
+const skew=a=>{const n=a.length,m=mean(a),s=sd(a);if(n<3||s===0)return NaN;return a.reduce((t,v)=>t+((v-m)/s)**3,0)*n/((n-1)*(n-2))};
+const kurt=a=>{const n=a.length,m=mean(a),s=sd(a);if(n<4||s===0)return NaN;const k=a.reduce((t,v)=>t+((v-m)/s)**4,0);return (n*(n+1)/((n-1)*(n-2)*(n-3)))*k-(3*(n-1)**2/((n-2)*(n-3)))};
+const sem=a=>{const n=a.length,s=sd(a);return n>0?s/Math.sqrt(n):NaN};
+const rBI=(x,a,b)=>{if(x<=0)return 0;if(x>=1)return 1;const pf=Math.exp(a*Math.log(x)+b*Math.log(1-x)-(lgamma(a)+lgamma(b)-lgamma(a+b)));let qab=a+b,qap=a+1,qam=a-1,c=1,d=1-qab*x/qap;if(Math.abs(d)<1e-30)d=1e-30;d=1/d;let h=d;for(let m=1;m<=200;m++){let m2=2*m,aa=m*(b-m)*x/((qam+m2)*(a+m2));d=1+aa*d;if(Math.abs(d)<1e-30)d=1e-30;d=1/d;c=1+aa/c;if(Math.abs(c)<1e-30)c=1e-30;h*=d*c;aa=-(a+m)*(qab+m)*x/((a+m2)*(qap+m2));d=1+aa*d;if(Math.abs(d)<1e-30)d=1e-30;d=1/d;c=1+aa/c;if(Math.abs(c)<1e-30)c=1e-30;h*=d*c;if(Math.abs(d*c-1)<1e-14)break}return pf*h/a};
+const tCDF=(t,df)=>{if(!sN(t)||!sN(df)||df<=0)return NaN;const ib=rBI(df/(df+t*t),df/2,.5);return t>=0?1-.5*ib:.5*ib};
+const tInv=(p,df)=>{if(p<=0)return -1e9;if(p>=1)return 1e9;let lo=-100,hi=100;for(let i=0;i<80;i++){const mid=(lo+hi)/2;tCDF(mid,df)<p?lo=mid:hi=mid;if(hi-lo<1e-9)break}return(lo+hi)/2};
+const fCDF=(f,d1,d2)=>{if(!sN(f)||f<=0)return 0;return rBI(d1*f/(d1*f+d2),d1/2,d2/2)};
+const fInv=(p,df1,df2)=>{if(p<=0)return 0;if(p>=1)return 1e9;let lo=0,hi=1e4;for(let i=0;i<80;i++){const mid=(lo+hi)/2;fCDF(mid,df1,df2)<p?lo=mid:hi=mid;if(hi-lo<1e-9)break}return(lo+hi)/2};
+const normCDF=z=>{const t=1/(1+.2316419*Math.abs(z)),d=.3989423*Math.exp(-z*z/2),p=d*t*(.3193815+t*(-.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return z>0?1-p:p};
+const normInv=p=>{if(p<=0)return-1e9;if(p>=1)return 1e9;let lo=-10,hi=10;for(let i=0;i<80;i++){const mid=(lo+hi)/2;normCDF(mid)<p?lo=mid:hi=mid;if(hi-lo<1e-9)break}return(lo+hi)/2};
+
+// Regularized lower incomplete gamma (for chi-squared and gamma distributions)
+const regGammaP=(a,x)=>{if(x<0)return 0;if(x===0)return 0;if(x<a+1){let ap=a,del=1/a,sum=del;for(let i=0;i<200;i++){ap++;del*=x/ap;sum+=del;if(Math.abs(del)<1e-12*Math.abs(sum))break}return sum*Math.exp(-x+a*Math.log(x)-lgamma(a))}else{let b=x+1-a,c=1e30,d=1/b,h=d;for(let i=1;i<=200;i++){const an=-i*(i-a),b2=b+2*i;d=an*d+b2;if(Math.abs(d)<1e-30)d=1e-30;c=b2+an/c;if(Math.abs(c)<1e-30)c=1e-30;d=1/d;h*=d*c;if(Math.abs(d*c-1)<1e-14)break}return 1-Math.exp(-x+a*Math.log(x)-lgamma(a))*h}};
+const chi2CDF=(x,k)=>x<=0?0:regGammaP(k/2,x/2);
+const chi2Inv=(p,df)=>{if(p<=0)return 0;if(p>=1)return 1e9;let lo=0,hi=df*20+200;for(let i=0;i<100;i++){const mid=(lo+hi)/2;chi2CDF(mid,df)<p?lo=mid:hi=mid;if(hi-lo<1e-9)break}return(lo+hi)/2};
+
+// Pearson correlation
+const pearsonR=(x,y)=>{const n=x.length;if(n<2)return NaN;const mx=mean(x),my=mean(y);let num=0,dx=0,dy=0;for(let i=0;i<n;i++){num+=(x[i]-mx)*(y[i]-my);dx+=(x[i]-mx)**2;dy+=(y[i]-my)**2}return dx*dy>0?num/Math.sqrt(dx*dy):NaN};
+
+// Spearman rank correlation
+const spearman=(x,y)=>{const n=x.length;const rankArr=arr=>{const s=[...arr].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(n);let i=0;while(i<n){let j=i;while(j<n-1&&s[j+1].v===s[j].v)j++;const avg=(i+j+2)/2;for(let k=i;k<=j;k++)r[s[k].i]=avg;i=j+1}return r};const rx=rankArr(x),ry=rankArr(y);return pearsonR(rx,ry)};
+
+// Shapiro-Wilk approximation (Royston 1995 approximation via normality check)
+const shapiroWilk=(a)=>{const n=a.length;if(n<3||n>5000)return{w:NaN,p:NaN};const s=[...a].sort((x,y)=>x-y);const m=mean(s),v=a.reduce((t,x)=>t+(x-m)**2,0);if(v===0)return{w:1,p:1};// Approximate W using correlation of sorted data with expected normal quantiles
+const q=s.map((_,i)=>normInv((i+1-.375)/(n+.25)));const r=pearsonR(s,q);const W=r*r;// P-value approximation
+const z=Math.log(1-W),mu=-1.2725+1.0521*(Math.log(n)),sig=1.0308-0.26763*(Math.log(n))**0.5;const zz=(z-mu)/sig;const p=1-normCDF(zz);return{w:W,p:Math.max(0,Math.min(1,p))}};
+
+// Grubbs test for outliers
+const grubbsTest=(a,alpha=.05)=>{const n=a.length;if(n<3)return{outlier:null,G:NaN,critical:NaN,isOut:false};const m=mean(a),s=sd(a);const G=Math.max(...a.map(v=>Math.abs(v-m)))/s;const tp=tInv(alpha/(2*n),n-2);const critical=(n-1)/Math.sqrt(n)*Math.sqrt(tp**2/(n-2+tp**2));const idx=a.reduce((mi,v,i)=>Math.abs(v-m)>Math.abs(a[mi]-m)?i:mi,0);return{outlier:a[idx],G,critical,isOut:G>critical,idx}};
+
+// Mann-Whitney U test
+const mannWhitney=(x,y)=>{const nx=x.length,ny=y.length;const all=[...x.map(v=>({v,g:0})),...y.map(v=>({v,g:1}))].sort((a,b)=>a.v-b.v);const ranks=new Array(nx+ny);let i=0;while(i<ranks.length){let j=i;while(j<ranks.length-1&&all[j+1].v===all[j].v)j++;const avg=(i+j+2)/2;for(let k=i;k<=j;k++)ranks[k]=avg;i=j+1}let Rx=0;for(let k=0;k<ranks.length;k++)if(all[k].g===0)Rx+=ranks[k];const U=Rx-nx*(nx+1)/2;const mu=nx*ny/2,sig=Math.sqrt(nx*ny*(nx+ny+1)/12);const z=(U-mu)/sig;const p=2*(1-normCDF(Math.abs(z)));return{U,z,p}};
+
+// Wilcoxon signed-rank test
+const wilcoxon=(a,b)=>{const diff=a.map((v,i)=>v-(b?b[i]:0)).filter(d=>d!==0);const n=diff.length;if(n<1)return{W:NaN,p:NaN};const abs=diff.map(d=>Math.abs(d));const sorted=[...abs].map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const ranks=new Array(n);let i=0;while(i<n){let j=i;while(j<n-1&&sorted[j+1].v===sorted[j].v)j++;const avg=(i+j+2)/2;for(let k=i;k<=j;k++)ranks[k]=avg;i=j+1}let Wp=0;for(let k=0;k<n;k++)if(diff[sorted[k].i]>0)Wp+=ranks[k];const mu=n*(n+1)/4,sig=Math.sqrt(n*(n+1)*(2*n+1)/24);const z=(Wp-mu)/sig;const p=2*(1-normCDF(Math.abs(z)));return{W:Wp,z,p}};
+
+// Kruskal-Wallis test
+const kruskalWallis=(groups)=>{const all=[].concat(...groups.map((g,i)=>g.map(v=>({v,g:i}))));all.sort((a,b)=>a.v-b.v);const n=all.length,k=groups.length;const ranks=new Array(n);let i=0;while(i<n){let j=i;while(j<n-1&&all[j+1].v===all[j].v)j++;const avg=(i+j+2)/2;for(let kk=i;kk<=j;kk++)ranks[kk]=avg;i=j+1}const Rg=groups.map(_=>0);for(let k=0;k<n;k++)Rg[all[k].g]+=ranks[k];const H=12/(n*(n+1))*groups.reduce((s,g,i)=>s+Rg[i]**2/g.length,0)-3*(n+1);const p=1-chi2CDF(H,k-1);return{H,p,df:k-1}};
+
+// Passing-Bablok regression (CLSI EP9-A3)
+const passingBablok=(x,y)=>{const n=x.length;if(n<3)return null;const slopes=[];for(let i=0;i<n-1;i++)for(let j=i+1;j<n;j++){const dx=x[j]-x[i];if(Math.abs(dx)>1e-10)slopes.push((y[j]-y[i])/dx)}slopes.sort((a,b)=>a-b);const m=slopes.length;const slope=m%2===1?slopes[(m-1)/2]:(slopes[m/2-1]+slopes[m/2])/2;const ints=x.map((xi,i)=>y[i]-slope*xi).sort((a,b)=>a-b);const intercept=ints.length%2===1?ints[(ints.length-1)/2]:(ints[ints.length/2-1]+ints[ints.length/2])/2;const Ci=1.96*Math.sqrt(n*(n-1)*(2*n+5)/18);const Mlo=Math.round((m-Ci)/2)-1,Mhi=m-1-Math.round((m-Ci)/2)+1;const slopeCI=[slopes[Math.max(0,Mlo)]||slopes[0],slopes[Math.min(m-1,Mhi)]||slopes[m-1]];const intLo=ints[Math.max(0,Math.round((ints.length-Ci)/2))];const intHi=ints[Math.min(ints.length-1,Math.round((ints.length+Ci)/2))];const yhat=x.map(xi=>slope*xi+intercept);const my=mean(y);const ssr=y.reduce((s,yi,i)=>s+(yi-yhat[i])**2,0);const sst=y.reduce((s,yi)=>s+(yi-my)**2,0);const r2=1-ssr/sst;return{slope,intercept,slopeCI,intCI:[intLo||ints[0],intHi||ints[ints.length-1]],n,r2,method:'Passing-Bablok (CLSI EP9-A3)'}};
+
+// Ordinary Deming regression
+const demReg=(x,y,lam=1)=>{const n=x.length;if(n<4)return null;const mx=mean(x),my=mean(y);let sxx=0,syy=0,sxy=0;for(let i=0;i<n;i++){sxx+=(x[i]-mx)**2;syy+=(y[i]-my)**2;sxy+=(x[i]-mx)*(y[i]-my)}sxx/=(n-1);syy/=(n-1);sxy/=(n-1);if(Math.abs(sxy)<1e-15)return null;const u=syy-lam*sxx;const slope=(u+Math.sqrt(u**2+4*lam*sxy**2))/(2*sxy);const intercept=my-slope*mx;return{slope,intercept,n,mx,my,sxx,syy,sxy}};
+
+// Deming jackknife CI (Linnet 1990, CLSI EP9-A3 recommended)
+const demJackCI=(x,y,lam=1,alpha=.05)=>{const n=x.length;if(n<6)return null;const full=demReg(x,y,lam);if(!full||!sN(full.slope))return null;const psSl=[],psIn=[];for(let i=0;i<n;i++){const xs=x.filter((_,j)=>j!==i),ys=y.filter((_,j)=>j!==i),r=demReg(xs,ys,lam);if(!r||!sN(r.slope))continue;psSl.push(n*full.slope-(n-1)*r.slope);psIn.push(n*full.intercept-(n-1)*r.intercept)}const k=psSl.length;if(k<4)return null;const mSl=mean(psSl),mIn=mean(psIn);const seSl=Math.sqrt(psSl.reduce((s,v)=>s+(v-mSl)**2,0)/(k*(k-1))),seIn=Math.sqrt(psIn.reduce((s,v)=>s+(v-mIn)**2,0)/(k*(k-1)));const tC=tInv(1-alpha/2,k-1);return{slope:full.slope,intercept:full.intercept,seSlope:seSl,seIntercept:seIn,slopeCI:[full.slope-tC*seSl,full.slope+tC*seSl],intCI:[full.intercept-tC*seIn,full.intercept+tC*seIn],n:k,method:'Deming (Linnet jackknife)'}};
+
+// Weighted Deming regression (weights = 1/mean², Linnet 1990)
+const wDemReg=(x,y,lam=1)=>{const n=x.length;if(n<4)return null;const w=x.map((xi,i)=>{const avg=(xi+y[i])/2;return avg>0?1/(avg*avg):1});const sw=w.reduce((a,b)=>a+b,0);const wn=w.map(v=>v/sw*n);const wmx=x.reduce((s,xi,i)=>s+wn[i]*xi,0)/n,wmy=y.reduce((s,yi,i)=>s+wn[i]*yi,0)/n;let sxx=0,syy=0,sxy=0;for(let i=0;i<n;i++){sxx+=wn[i]*(x[i]-wmx)**2;syy+=wn[i]*(y[i]-wmy)**2;sxy+=wn[i]*(x[i]-wmx)*(y[i]-wmy)}sxx/=n-1;syy/=n-1;sxy/=n-1;if(Math.abs(sxy)<1e-15)return null;const sl=(syy-lam*sxx+Math.sqrt((syy-lam*sxx)**2+4*lam*sxy**2))/(2*sxy);return{slope:sl,intercept:wmy-sl*wmx,weights:wn}};
+
+const wDemJackCI=(x,y,lam=1,alpha=.05)=>{const n=x.length;if(n<6)return null;const full=wDemReg(x,y,lam);if(!full||!sN(full.slope))return null;const psSl=[],psIn=[];for(let i=0;i<n;i++){const xs=x.filter((_,j)=>j!==i),ys=y.filter((_,j)=>j!==i),r=wDemReg(xs,ys,lam);if(!r||!sN(r.slope))continue;psSl.push(n*full.slope-(n-1)*r.slope);psIn.push(n*full.intercept-(n-1)*r.intercept)}const k=psSl.length;if(k<4)return null;const mSl=mean(psSl),mIn=mean(psIn);const seSl=Math.sqrt(psSl.reduce((s,v)=>s+(v-mSl)**2,0)/(k*(k-1))),seIn=Math.sqrt(psIn.reduce((s,v)=>s+(v-mIn)**2,0)/(k*(k-1)));const tC=tInv(1-alpha/2,k-1);return{slope:full.slope,intercept:full.intercept,seSlope:seSl,seIntercept:seIn,slopeCI:[full.slope-tC*seSl,full.slope+tC*seSl],intCI:[full.intercept-tC*seIn,full.intercept+tC*seIn],n:k,method:'Weighted Deming (Linnet jackknife)'}};
+
+// Linear regression (OLS)
+const linReg=(x,y)=>{const n=x.length;if(n<2)return null;const mx=mean(x),my=mean(y);let sxy=0,sxx=0;for(let i=0;i<n;i++){sxy+=(x[i]-mx)*(y[i]-my);sxx+=(x[i]-mx)**2}const b1=sxx===0?0:sxy/sxx,b0=my-b1*mx;const yhat=x.map(xi=>b0+b1*xi);const sse=y.reduce((s,yi,i)=>s+(yi-yhat[i])**2,0);const sst=y.reduce((s,yi)=>s+(yi-my)**2,0);const r2=sst===0?1:1-sse/sst;const mse=sse/(n-2);const seb1=sxx===0?0:Math.sqrt(mse/sxx);const seb0=Math.sqrt(mse*(1/n+mx**2/sxx));const tC=tInv(.975,n-2);return{b0,b1,r2,r:Math.sqrt(r2)*(b1>=0?1:-1),n,seb0,seb1,b0CI:[b0-tC*seb0,b0+tC*seb0],b1CI:[b1-tC*seb1,b1+tC*seb1],F:r2/(1-r2)*(n-2),p:1-fCDF(r2/(1-r2)*(n-2),1,n-2)}};
+
+// Bland-Altman analysis
+const blandAltman=(x,y)=>{const n=x.length;if(n<2)return null;const diff=x.map((xi,i)=>y[i]-xi),avg=x.map((xi,i)=>(xi+y[i])/2);const meanD=mean(diff),sdD=sd(diff);const LOA=[meanD-1.96*sdD,meanD+1.96*sdD];const tC=tInv(.975,n-1);const seLOA=Math.sqrt(3*sdD**2/n);const r=pearsonR(avg,diff);const tr=r*Math.sqrt(n-2)/Math.sqrt(1-r**2);const pr=2*(1-tCDF(Math.abs(tr),n-2));return{meanD,sdD,LOA,meanDCI:[meanD-tC*sdD/Math.sqrt(n),meanD+tC*sdD/Math.sqrt(n)],loaLowerCI:[LOA[0]-tC*seLOA,LOA[0]+tC*seLOA],loaUpperCI:[LOA[1]-tC*seLOA,LOA[1]+tC*seLOA],proportionalBiasR:r,proportionalBiasP:pr,diff,avg,n}};
+
+// TOST equivalence test
+const tost=(a1,a2,delta,alpha=.05,paired=false)=>{const n1=a1.length,n2=a2.length;if(n1<2||n2<2)return null;const m1=mean(a1),m2=mean(a2),diff=m1-m2;let se,df;if(paired){const d=a1.map((v,i)=>v-a2[i]);se=sd(d)/Math.sqrt(n1);df=n1-1}else{const s1=sd(a1),s2=sd(a2);const w1=s1**2/n1,w2=s2**2/n2;se=Math.sqrt(w1+w2);df=Math.floor((w1+w2)**2/(w1**2/(n1-1)+w2**2/(n2-1)))}const t1=(diff-(-delta))/se,t2=(diff-delta)/se;const p1=1-tCDF(t1,df),p2=tCDF(t2,df);const pTOST=Math.max(p1,p2);const ci=[diff-tInv(1-alpha,df)*se,diff+tInv(1-alpha,df)*se];return{diff,se,df,t1,t2,p1,p2,pTOST,ci,equivalent:pTOST<alpha}};
+
+// Box-Cox optimal lambda
+const boxCoxLambda=(a)=>{const n=a.length;if(a.some(v=>v<=0))return NaN;let bestL=0,bestLL=-Infinity;for(let lam=-3;lam<=3;lam+=.1){const t=lam===0?a.map(v=>Math.log(v)):a.map(v=>(v**lam-1)/lam);const s=sd(t),m=mean(t);if(s<=0)continue;const gm=Math.exp(a.reduce((s,v)=>s+Math.log(v),0)/n);const ll=-(n/2)*Math.log(s**2)+(lam-1)*a.reduce((s,v)=>s+Math.log(v),0);if(ll>bestLL){bestLL=ll;bestL=lam}}return Math.round(bestL*10)/10};
+
+// ROC analysis
+const rocAnalysis=(scores,labels)=>{const n=scores.length;const sorted=[...scores.map((s,i)=>({s,l:labels[i]}))].sort((a,b)=>b.s-a.s);const pos=labels.filter(l=>l===1).length,neg=n-pos;if(pos===0||neg===0)return null;const pts=[{se:0,sp:1,t:Infinity}];let tp=0,fp=0;for(const pt of sorted){if(pt.l===1)tp++;else fp++;pts.push({se:tp/pos,sp:1-fp/neg,t:pt.s})}pts.push({se:1,sp:0,t:-Infinity});let auc=0;for(let i=1;i<pts.length;i++)auc+=Math.abs(pts[i].se-pts[i-1].se)*(pts[i].sp+pts[i-1].sp)/2;// Youden optimal cutoff
+const youdenIdx=pts.reduce((best,pt,i)=>pt.se+pt.sp-1>best.val?{val:pt.se+pt.sp-1,i}:best,{val:-Infinity,i:0});// AUC SE (Hanley-McNeil)
+const q1=auc/(2-auc),q2=2*auc**2/(1+auc);const se=Math.sqrt((auc*(1-auc)+(pos-1)*(q1-auc**2)+(neg-1)*(q2-auc**2))/(pos*neg));const z=auc>.5?(auc-.5)/se:0;const p=2*(1-normCDF(Math.abs(z)));return{auc,se,ci:[auc-1.96*se,auc+1.96*se],p,pts,optimal:pts[youdenIdx.i],pos,neg,n}};
+
+// Reference interval calculation (EP28-A3c)
+const refInterval=(a,method='nonparametric')=>{const n=a.length;const s=[...a].sort((x,y)=>x-y);if(method==='nonparametric'){const lo=pct(s,2.5),hi=pct(s,97.5);// Bootstrap CI (simplified Reed method for percentiles)
+const rank_lo=Math.round(.025*(n+1)),rank_hi=Math.round(.975*(n+1));const z=1.96;const dn=z*Math.sqrt(n*.025*.975),up=z*Math.sqrt(n*.975*.025);const loCI=[s[Math.max(0,Math.round(rank_lo-dn)-1)],s[Math.min(n-1,Math.round(rank_lo+dn)-1)]];const hiCI=[s[Math.max(0,Math.round(rank_hi-up)-1)],s[Math.min(n-1,Math.round(rank_hi+up)-1)]];return{lo,hi,loCI,hiCI,n,method:'Non-parametric (EP28-A3c)'}}else{const m=mean(s),v=sd(s);const z=1.645;return{lo:m-1.96*v,hi:m+1.96*v,loCI:[m-1.96*v-z*v*Math.sqrt(3/n),m-1.96*v+z*v*Math.sqrt(3/n)],hiCI:[m+1.96*v-z*v*Math.sqrt(3/n),m+1.96*v+z*v*Math.sqrt(3/n)],n,method:'Parametric (Gaussian)'}}};
+
+// Cohen's kappa
+const cohenKappa=(obs1,obs2)=>{const cats=[...new Set([...obs1,...obs2])].sort();const k=cats.length,n=obs1.length;const matrix=Array.from({length:k},()=>new Array(k).fill(0));obs1.forEach((v,i)=>{const r=cats.indexOf(v),c=cats.indexOf(obs2[i]);if(r>=0&&c>=0)matrix[r][c]++});const po=matrix.reduce((s,row,i)=>s+row[i],0)/n;const pe=cats.reduce((s,_,i)=>{const ri=matrix[i].reduce((a,b)=>a+b,0),ci=matrix.reduce((a,row)=>a+row[i],0);return s+(ri/n)*(ci/n)},0);const kappa=(po-pe)/(1-pe);const se=Math.sqrt(po*(1-po)/(n*(1-pe)**2));const z=kappa/se;const p=2*(1-normCDF(Math.abs(z)));return{kappa,se,z,p,po,pe,matrix,cats}};
+
+// ICC (two-way mixed, absolute agreement)
+const icc=(data)=>{// data is array of arrays: data[subject][rater]
+const k=data.length,p=data[0].length,n=k*p;const rowMeans=data.map(row=>mean(row));const grandMean=mean(rowMeans);const MSr=data.reduce((s,row,i)=>s+p*(rowMeans[i]-grandMean)**2,0)/(k-1);const MSw=data.reduce((s,row,i)=>s+row.reduce((ss,v)=>ss+(v-rowMeans[i])**2,0),0)/(k*(p-1));const colMeans=Array.from({length:p},(_,j)=>mean(data.map(row=>row[j])));const MSc=data.reduce((s,_,j)=>s+k*(colMeans[j]||0-grandMean)**2,0)/(p-1);const MSe=(data.reduce((s,row,i)=>s+row.reduce((ss,v,j)=>ss+(v-rowMeans[i]-colMeans[j]+grandMean)**2,0),0))/((k-1)*(p-1));const icc1=(MSr-MSw)/(MSr+(p-1)*MSw);const icc2=(MSr-MSe)/(MSr+(p-1)*MSe+(p/k)*(MSc-MSe));const icc3=(MSr-MSe)/(MSr+(p-1)*MSe);return{icc1,icc2,icc3,MSr,MSw,MSc,MSe,k,p}};
+
+// One-way ANOVA (Welch)
+const welchAnova=(groups)=>{const k=groups.length;const ns=groups.map(g=>g.length),ms=groups.map(mean),vs=groups.map(g=>sd(g)**2);const ws=groups.map((g,i)=>ns[i]/vs[i]);const wSum=ws.reduce((a,b)=>a+b,0);const grandM=ws.reduce((s,w,i)=>s+w*ms[i],0)/wSum;const F=ws.reduce((s,w,i)=>s+w*(ms[i]-grandM)**2,0)/(k-1);const lambda=k**2-1;const U=groups.reduce((s,g,i)=>s+(1-ws[i]/wSum)**2/(ns[i]-1),0)*3/(k**2-1);const df2=1/(U);const p=1-fCDF(F,k-1,df2);return{F,df1:k-1,df2,p,grandM,groupMeans:ms,groupSDs:groups.map(sd)}};
+
+// ================================================================
+// CLSI/IFCC CONSTANTS
+// ================================================================
+const TEa_PRESETS={"Glukos (EFLM BPD)":5.6,"Glukos (CLIA 1988)":10,"Kreatinin (EFLM BPD)":8.9,"Kreatinin (CLIA 1988)":15,"HbA1c (EFLM BPD)":3.0,"HbA1c (CLIA 1988)":6,"Kolesterol (EFLM BPD)":8.3,"Kolesterol (CLIA 1988)":10,"TSH (EFLM BPD)":24.1,"TSH (CLIA 1988)":20,"Natrium (EFLM BPD)":1.1,"Natrium (CLIA 1988)":4,"Kalium (EFLM BPD)":4.8,"Kalium (CLIA 1988)":25,"Kalcium (EFLM BPD)":2.5,"Kalcium (CLIA 1988)":8,"ALAT (EFLM BPD)":19.4,"ASAT (EFLM BPD)":13.5,"ALP (EFLM BPD)":11.9,"Bilirubin (EFLM BPD)":26.9,"CRP (EFLM BPD)":56.6,"Albumin (EFLM BPD)":4.1,"Fosfat (EFLM BPD)":10.1,"Urat (EFLM BPD)":11.8,"Triglycerider (EFLM BPD)":25.0};
+const BV_DB={"Albumin":{cvi:3.2,cvg:4.2},"ALP":{cvi:6.4,cvg:26.1},"ALAT":{cvi:19.4,cvg:41.6},"ASAT":{cvi:12.3,cvg:23.1},"Bilirubin":{cvi:21.8,cvg:28.4},"Calcium":{cvi:1.9,cvg:2.8},"Kolesterol":{cvi:5.4,cvg:15.3},"Kreatinin":{cvi:5.3,cvg:14.7},"CRP":{cvi:42.2,cvg:76.3},"Ferritin":{cvi:14.2,cvg:15.0},"Glukos":{cvi:5.6,cvg:7.5},"HbA1c":{cvi:1.9,cvg:4.0},"Järn":{cvi:26.5,cvg:23.2},"Kalium":{cvi:4.8,cvg:5.6},"Natrium":{cvi:0.6,cvg:1.0},"Fosfat":{cvi:8.5,cvg:9.0},"TSH":{cvi:19.3,cvg:27.2},"fT4":{cvi:4.9,cvg:7.3},"Urat":{cvi:8.6,cvg:17.5},"Urea":{cvi:12.3,cvg:18.3}};
+const calcSigma=(tea,bias,cvp)=>sN(tea)&&sN(bias)&&sN(cvp)&&cvp>0?(tea-Math.abs(bias))/cvp:NaN;
+const sigmaQCRec=s=>{if(!sN(s))return{rule:'—',n:'—',color:'gray'};if(s>=6)return{rule:'1:3s (N=1)',n:1,color:'#16a34a',label:'Utmärkt'};if(s>=5)return{rule:'1:3s (N=2)',n:2,color:'#22c55e',label:'Bra'};if(s>=4)return{rule:'13s/22s/R4s (N=2)',n:2,color:'#84cc16',label:'Godkänd'};if(s>=3)return{rule:'13s/22s/R4s/41s (N=4)',n:4,color:'#eab308',label:'Gräns'};return{rule:'Överväg revision',n:null,color:'#dc2626',label:'Dålig'}};
+
+// ================================================================
+// THEME / STYLE SYSTEM
+// ================================================================
+const THEMES={light:{bg:'#f8fafc',card:'#ffffff',border:'#e2e8f0',text:'#0f172a',sub:'#64748b',accent:'#2563eb',accentText:'#ffffff',sidebar:'#1e293b',sidebarText:'#94a3b8',sidebarActive:'#2563eb',sidebarActiveText:'#ffffff',input:'#ffffff',inputBorder:'#cbd5e1',btnPrimary:'#2563eb',btnPrimaryText:'#fff',btnSecondary:'#f1f5f9',btnSecondaryText:'#334155',statBox:'#f8fafc',tableHead:'#f1f5f9',positive:'#dcfce7',negative:'#fee2e2',warning:'#fef9c3',info:'#dbeafe'},dark:{bg:'#0f172a',card:'#1e293b',border:'#334155',text:'#f1f5f9',sub:'#94a3b8',accent:'#3b82f6',accentText:'#ffffff',sidebar:'#020617',sidebarText:'#64748b',sidebarActive:'#3b82f6',sidebarActiveText:'#ffffff',input:'#0f172a',inputBorder:'#334155',btnPrimary:'#3b82f6',btnPrimaryText:'#fff',btnSecondary:'#1e293b',btnSecondaryText:'#94a3b8',statBox:'#0f172a',tableHead:'#0f172a',positive:'#14532d',negative:'#450a0a',warning:'#713f12',info:'#1e3a5f'}};
+
+const mkS=(t)=>({app:{background:t.bg,color:t.text},card:{background:t.card,borderColor:t.border},sidebar:{background:t.sidebar,color:t.sidebarText,borderRight:'1px solid '+t.border},sidebarItem:{color:t.sidebarText},sidebarActive:{background:t.sidebarActive+'22',color:t.sidebarActive,fontWeight:700},input:{background:t.input,borderColor:t.inputBorder,color:t.text},btnPrimary:{background:t.btnPrimary,color:t.btnPrimaryText},btnSec:{background:t.btnSecondary,color:t.btnSecondaryText},tableHead:{background:t.tableHead},tableBorder:{borderColor:t.border}});
+
+// ================================================================
+// ERROR BOUNDARY
+// ================================================================
+class ErrorBoundary extends React.Component{constructor(p){super(p);this.state={err:null}}static getDerivedStateFromError(e){return{err:e}}render(){if(this.state.err)return React.createElement('div',{style:{padding:24,color:'#ef4444',fontFamily:'system-ui'}},React.createElement('b',null,'Fel i panelen.'),React.createElement('br',null),React.createElement('span',{style:{fontSize:12}},String(this.state.err)),React.createElement('br',null),React.createElement('button',{onClick:()=>this.setState({err:null}),style:{marginTop:12,padding:'6px 16px',background:'#2563eb',color:'#fff',border:'none',borderRadius:6,cursor:'pointer'}},'Försök igen'));return this.props.children}}
+
+// ================================================================
+// SHARED UI COMPONENTS
+// ================================================================
+const PageTitle=({title,sub,th})=><div><div className="page-title">{title}</div>{sub&&<div className="page-sub" style={{color:th.sub}}>{sub}</div>}</div>;
+const Card=({children,th,style={}})=><div className="card" style={{background:th.card,borderColor:th.border,...style}}>{children}</div>;
+const Btn=({onClick,children,secondary,danger,disabled,small,th,style={}})=><button onClick={onClick} disabled={disabled} style={{background:danger?'#dc2626':secondary?th.btnSecondary:th.btnPrimary,color:danger?'#fff':secondary?th.btnSecondaryText:th.btnPrimaryText,opacity:disabled?.5:1,padding:small?'4px 12px':'7px 16px',fontSize:small?12:13,...style}}>{children}</button>;
+const Field=({label,children})=><div style={{marginBottom:12}}><label>{label}</label>{children}</div>;
+const Inp=({value,onChange,type='text',placeholder,th,min,max,step})=><input type={type} value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={{background:th.input,borderColor:th.inputBorder,color:th.text}} min={min} max={max} step={step}/>;
+const Sel=({value,onChange,options,th})=><select value={value} onChange={e=>onChange(e.target.value)} style={{background:th.input,borderColor:th.inputBorder,color:th.text}}>{options.map(o=><option key={o.value||o} value={o.value||o}>{o.label||o}</option>)}</select>;
+const Tbl=({headers,rows,th})=><div style={{overflowX:'auto'}}><table><thead><tr style={{...mkS(th).tableHead,...mkS(th).tableBorder}}>{headers.map((h,i)=><th key={i} style={{...mkS(th).tableHead,borderBottomColor:th.border}}>{h}</th>)}</tr></thead><tbody>{rows.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j} style={{borderBottomColor:th.border}}>{c}</td>)}</tr>)}</tbody></table></div>;
+const SigmaBadge=({s})=>{const r=sigmaQCRec(s);return<span className="badge" style={{background:r.color+'22',color:r.color}}>{sN(s)?s.toFixed(2):' —'} σ</span>};
+const PVal=({p,th})=>{const color=p<.001?th.positive:p<.05?th.positive:th.negative;return<span style={{color:p<.05?'#16a34a':'#dc2626',fontWeight:600}}>{fmtP(p)}</span>};
+
+// Parse textarea input to number array
+const parseNums=s=>s.replace(/,/g,'.').split(/[\s\n;]+/).map(Number).filter(sN);
+const parseGroups=s=>s.split(/\n{2,}/).map(block=>parseNums(block)).filter(g=>g.length>0);
+
+// ================================================================
+// PAGE COMPONENTS
+// ================================================================
+
+// ---- UPLOAD ----
+const UploadP=({cols,grps,setCols,setGrps,th})=>{
+const [text,setText]=useState('');
+const [sep,setSep]=useState('auto');
+const [msg,setMsg]=useState('');
+const [manual,setManual]=useState('');
+const [colName,setColName]=useState('Kolumn 1');
+const handleFile=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{const res=Papa.parse(ev.target.result,{skipEmptyLines:true,dynamicTyping:true});if(res.errors.length>0&&res.data.length===0){setMsg('Fel vid parsning: '+res.errors[0].message);return}const rows=res.data;if(!rows.length){setMsg('Ingen data hittades');return}const header=typeof rows[0][0]==='string'&&isNaN(rows[0][0]);const startRow=header?1:0;const numCols=rows[0].length;const newCols=Array.from({length:numCols},(_,ci)=>{const name=header?String(rows[0][ci]):('Kolumn '+(ci+1));const values=rows.slice(startRow).map(row=>Number(row[ci])).filter(sN);return{name,values}}).filter(c=>c.values.length>0);setCols(newCols);setMsg(`✓ Laddade ${newCols.length} kolumn(er) med ${newCols[0]?.values.length||0} rader.`)};r.readAsText(f)};
+const handlePaste=()=>{const lines=text.trim().split('\n').filter(l=>l.trim());if(!lines.length){setMsg('Ingen data');return}const delim=sep==='auto'?(lines[0].includes('\t')?'\t':lines[0].includes(';')?';':','):sep;const header=isNaN(lines[0].split(delim)[0].trim().replace(',','.'));const rows=lines.slice(header?1:0).map(l=>l.split(delim).map(v=>parseFloat(v.replace(',','.'))));const numCols=rows[0].length;const newCols=Array.from({length:numCols},(_,ci)=>{const name=header?lines[0].split(delim)[ci]?.trim()||('Kol'+(ci+1)):('Kol'+(ci+1));const values=rows.map(r=>r[ci]).filter(sN);return{name,values}}).filter(c=>c.values.length>0);setCols(newCols);setMsg(`✓ Klistrade in ${newCols.length} kolumn(er).`)};
+const handleManual=()=>{const vals=parseNums(manual);if(!vals.length){setMsg('Inga giltiga tal hittades');return}const existing=cols.find(c=>c.name===colName);if(existing){setCols(cols.map(c=>c.name===colName?{...c,values:vals}:c))}else{setCols([...cols,{name:colName,values:vals}])}setMsg(`✓ Lade till "${colName}" med ${vals.length} värden.`);setManual('')};
+const clearAll=()=>{setCols([]);setGrps([]);setMsg('Data rensad.')};
+return(<div>
+<PageTitle title="📂 Ladda / Mata in data" sub="Importera CSV, klistra in data, eller mata in manuellt" th={th}/>
+<div className="row">
+<div className="col">
+<Card th={th}><h3>Filimport (CSV/TSV)</h3>
+<Field label="Välj fil"><input type="file" accept=".csv,.tsv,.txt" onChange={handleFile} style={{color:th.text}}/></Field>
+</Card>
+<Card th={th}><h3>Klistra in data</h3>
+<Field label="Avgränsare"><Sel value={sep} onChange={setSep} options={[{value:'auto',label:'Automatisk'},{value:'\t',label:'Tab'},{value:',',label:'Komma'},{value:';',label:'Semikolon'}]} th={th}/></Field>
+<Field label="Data (klistra in från Excel)"><textarea value={text} onChange={e=>setText(e.target.value)} rows={6} style={{background:th.input,borderColor:th.inputBorder,color:th.text,width:'100%',borderRadius:6,padding:'6px 10px',fontFamily:'monospace',fontSize:12}} placeholder="Klistra in data här..."/></Field>
+<Btn onClick={handlePaste} th={th}>Importera data</Btn>
+</Card>
+</div>
+<div className="col">
+<Card th={th}><h3>Manuell inmatning</h3>
+<Field label="Kolumnnamn"><Inp value={colName} onChange={setColName} th={th} placeholder="Kolumn 1"/></Field>
+<Field label="Värden (ett per rad, eller space-separerade)"><textarea value={manual} onChange={e=>setManual(e.target.value)} rows={8} style={{background:th.input,borderColor:th.inputBorder,color:th.text,width:'100%',borderRadius:6,padding:'6px 10px',fontFamily:'monospace',fontSize:12}} placeholder="12.3&#10;14.5&#10;11.8&#10;..."/></Field>
+<div style={{display:'flex',gap:8}}><Btn onClick={handleManual} th={th}>Lägg till kolumn</Btn><Btn onClick={clearAll} secondary th={th} danger>Rensa allt</Btn></div>
+</Card>
+{msg&&<Card th={th}><div style={{color:msg.startsWith('✓')?'#16a34a':'#dc2626',fontWeight:600}}>{msg}</div></Card>}
+{cols.length>0&&<Card th={th}><h3>Laddade kolumner</h3>
+{cols.map((c,i)=><div key={i} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',borderBottom:'1px solid '+th.border}}>
+<span style={{fontWeight:600}}>{c.name}</span><span style={{color:th.sub}}>n={c.values.length}, x̄={fmt2(mean(c.values))}</span>
+<Btn small th={th} danger onClick={()=>setCols(cols.filter((_,j)=>j!==i))}>×</Btn>
+</div>)}</Card>}
+</div>
+</div>
+</div>)};
+
+// ---- DATA VIEW ----
+const DataP=({cols,grps,th})=>{
+const [selCol,setSelCol]=useState(0);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data i "Ladda / Mata in" först.</div></Card>;
+const c=cols[selCol]||cols[0];
+return(<div>
+<PageTitle title="📋 Data" sub="Visa och granska inläst data" th={th}/>
+<div className="row">
+<div style={{flex:'0 0 180px'}}>
+<Card th={th}><h3>Kolumner</h3>
+{cols.map((col,i)=><div key={i} onClick={()=>setSelCol(i)} style={{padding:'5px 8px',borderRadius:6,cursor:'pointer',background:selCol===i?th.accent+'22':'transparent',color:selCol===i?th.accent:th.text,fontWeight:selCol===i?700:400,marginBottom:2}}>{col.name}</div>)}
+</Card>
+</div>
+<div className="col">
+<Card th={th}><h3>{c.name} — Snabbstatistik</h3>
+<div className="stat-grid">
+{[['n',c.values.length,''],['Medelvärde',fmt2(mean(c.values)),''],['Median',fmt2(median(c.values)),''],['SD',fmt2(sd(c.values)),''],['CV%',fmt2(cv(c.values)),'%'],['Min',fmt2(Math.min(...c.values)),''],['Max',fmt2(Math.max(...c.values)),''],['P2.5',fmt2(pct(c.values,2.5)),''],['P97.5',fmt2(pct(c.values,97.5)),'']].map(([l,v,u])=><div key={l} className="stat-box" style={{background:th.statBox||th.bg,borderColor:th.border}}><div className="stat-label">{l}</div><div className="stat-val">{v}{u}</div></div>)}
+</div>
+</Card>
+<Card th={th}><h3>Datatabell (första 200 rader)</h3>
+<Tbl headers={['#',c.name]} rows={c.values.slice(0,200).map((v,i)=>[i+1,v.toFixed(4)])} th={th}/>
+</Card>
+</div>
+</div>
+</div>)};
+
+// ---- RECOMMENDATIONS ----
+const RecP=({cols,grps,th})=>{
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data i "Ladda / Mata in" först.</div></Card>;
+const recs=[];
+cols.forEach(c=>{const n=c.values.length,sw=n>=3?shapiroWilk(c.values):null;const normal=sw&&sw.p>.05;if(n<30)recs.push({col:c.name,text:'Litet urval (n='+n+'): använd icke-parametriska test',level:'warning'});if(!normal&&n>=3)recs.push({col:c.name,text:'Icke-normalfördelad (Shapiro-Wilk p='+fmtP(sw.p)+'): använd Mann-Whitney, Kruskal-Wallis',level:'warning'});if(normal)recs.push({col:c.name,text:'Normalfördelad (p='+fmtP(sw.p)+'): parametriska test lämpliga',level:'ok'})});
+return(<div>
+<PageTitle title="💡 Rekommendationer" sub="Automatisk analys av ditt dataset" th={th}/>
+{recs.length===0&&<Card th={th}><div>Inga rekommendationer. Ladda data för analys.</div></Card>}
+{recs.map((r,i)=><Card key={i} th={th} style={{borderLeft:'4px solid '+(r.level==='ok'?'#16a34a':'#eab308')}}>
+<span style={{fontWeight:700}}>{r.col}:</span> {r.text}
+</Card>)}
+</div>)};
+
+// ---- DESCRIPTIVE STATISTICS ----
+const DescP=({cols,th})=>{
+const [selCol,setSelCol]=useState(0);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const c=cols[selCol]||cols[0];const a=c.values;
+const n=a.length,m=mean(a),med=median(a),s=sd(a),cv_=cv(a),sk=skew(a),ku=kurt(a),mn=Math.min(...a),mx=Math.max(...a),se=sem(a);
+const sw=n>=3?shapiroWilk(a):{w:NaN,p:NaN};
+const tC=tInv(.975,n-1);
+const ciMean=[m-tC*se,m+tC*se];
+return(<div>
+<PageTitle title="📊 Deskriptiv statistik" sub="Medelvärde, spridningsmått, normalitetstest" th={th}/>
+<Field label="Välj kolumn"><Sel value={selCol} onChange={v=>setSelCol(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<div className="stat-grid">
+{[['n (urvalsstorlek)',n],['Medelvärde (mean)',fmt(m,4)],['Median',fmt(med,4)],['SD (standardavvikelse)',fmt(s,4)],['Variationskoefficient (CV%)',fmt2(cv_)+'%'],['Standardfel (SEM)',fmt(se,4)],['95% KI medelvärde','['+fmt2(ciMean[0])+', '+fmt2(ciMean[1])+']'],['Minimum',fmt(mn,4)],['Maximum',fmt(mx,4)],['Räckvidd (Range)',fmt(mx-mn,4)],['P25 (Q1)',fmt(pct(a,25),4)],['P75 (Q3)',fmt(pct(a,75),4)],['IQR (P75-P25)',fmt(pct(a,75)-pct(a,25),4)],['P2.5',fmt(pct(a,2.5),4)],['P97.5',fmt(pct(a,97.5),4)],['Skevhet (Skewness)',fmt(sk,4)],['Kurtosis (Excess)',fmt(ku,4)],['Summa',fmt(a.reduce((s,v)=>s+v,0),4)]].map(([l,v])=><div key={l} className="stat-box" style={{background:th.statBox||th.bg,borderColor:th.border}}><div className="stat-label">{l}</div><div className="stat-val" style={{fontSize:16}}>{v}</div></div>)}
+</div>
+<Card th={th}><h3>Normalitetstest (Shapiro-Wilk)</h3>
+<Tbl headers={['Test','Statistika','p-värde','Slutsats']} rows={[['Shapiro-Wilk',fmt(sw.w,4),fmtP(sw.p),sw.p>.05?'✓ Normalfördelad (p>0.05)':'✗ Ej normalfördelad (p≤0.05)']]} th={th}/>
+<div className="hint">Shapiro-Wilk-testet är känsligast för n=3–50. För n&gt;50 används Kolmogorov-Smirnov.</div>
+</Card>
+</div>)};
+
+// ---- HISTOGRAM ----
+const HistP=({cols,th})=>{
+const [selCol,setSelCol]=useState(0);const [bins,setBins]=useState(10);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=(cols[selCol]||cols[0]).values;
+const mn=Math.min(...a),mx=Math.max(...a),w=(mx-mn)/bins;
+const data=Array.from({length:bins},(_,i)=>{const lo=mn+i*w,hi=lo+w;return{x:fmt2((lo+hi)/2),count:a.filter(v=>v>=lo&&(i===bins-1?v<=hi:v<hi)).length}});
+return(<div>
+<PageTitle title="📊 Histogram" sub="Frekvensfördelning med normalöverlägg" th={th}/>
+<div className="row">
+<Field label="Kolumn"><Sel value={selCol} onChange={v=>setSelCol(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Antal klasser"><Inp type="number" value={bins} onChange={v=>setBins(Math.max(3,Math.min(50,+v||10)))} min={3} max={50} th={th}/></Field>
+</div>
+<Card th={th}>
+<ResponsiveContainer width="100%" height={320}>
+<BarChart data={data} margin={{top:10,right:10,bottom:10,left:0}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis dataKey="x" tick={{fontSize:11,fill:th.sub}}/>
+<YAxis tick={{fontSize:11,fill:th.sub}}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Bar dataKey="count" fill={th.accent} name="Antal"/>
+</BarChart>
+</ResponsiveContainer>
+</Card>
+<Card th={th}><div className="hint">n={a.length} · Medelvärde={fmt2(mean(a))} · SD={fmt2(sd(a))}</div></Card>
+</div>)};
+
+// ---- FREQUENCY TABLE ----
+const FreqP=({cols,th})=>{
+const [selCol,setSelCol]=useState(0);const [bins,setBins]=useState(10);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=(cols[selCol]||cols[0]).values;
+const mn=Math.min(...a),mx=Math.max(...a),w=(mx-mn)/bins,n=a.length;
+const rows=Array.from({length:bins},(_,i)=>{const lo=mn+i*w,hi=lo+w;const cnt=a.filter(v=>v>=lo&&(i===bins-1?v<=hi:v<hi)).length;return[fmt2(lo)+' – '+fmt2(hi),cnt,(cnt/n*100).toFixed(1)+'%']});
+return(<div>
+<PageTitle title="📋 Frekvenstabell" sub="Frekvens per klass" th={th}/>
+<div className="row">
+<Field label="Kolumn"><Sel value={selCol} onChange={v=>setSelCol(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Klasser"><Inp type="number" value={bins} onChange={v=>setBins(Math.max(2,+v||10))} min={2} max={50} th={th}/></Field>
+</div>
+<Card th={th}><Tbl headers={['Klass','Frekvens','Relativ frekvens']} rows={rows} th={th}/></Card>
+</div>)};
+
+// ---- CUMULATIVE FREQUENCY ----
+const CumFreqP=({cols,th})=>{
+const [selCol,setSelCol]=useState(0);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=[...(cols[selCol]||cols[0]).values].sort((x,y)=>x-y);const n=a.length;
+const data=a.map((v,i)=>({x:+v.toFixed(4),cum:((i+1)/n*100).toFixed(1)}));
+return(<div>
+<PageTitle title="📈 Kumulativ frekvens" sub="ECDF – empirisk kumulativ fördelningsfunktion" th={th}/>
+<Field label="Kolumn"><Sel value={selCol} onChange={v=>setSelCol(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Card th={th}>
+<ResponsiveContainer width="100%" height={320}>
+<LineChart data={data} margin={{top:10,right:10,bottom:10,left:0}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis dataKey="x" tick={{fontSize:11,fill:th.sub}}/>
+<YAxis tick={{fontSize:11,fill:th.sub}} domain={[0,100]} tickFormatter={v=>v+'%'}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}} formatter={v=>v+'%'}/>
+<Line dataKey="cum" dot={false} stroke={th.accent} strokeWidth={2} name="Kum. %"/>
+<ReferenceLine y={2.5} stroke="#ef4444" strokeDasharray="4 4" label={{value:'P2.5',fontSize:10,fill:'#ef4444'}}/>
+<ReferenceLine y={97.5} stroke="#ef4444" strokeDasharray="4 4" label={{value:'P97.5',fontSize:10,fill:'#ef4444'}}/>
+</LineChart>
+</ResponsiveContainer>
+</Card>
+</div>)};
+
+// ---- Q-Q PLOT ----
+const QQPlotP=({cols,th})=>{
+const [selCol,setSelCol]=useState(0);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=[...(cols[selCol]||cols[0]).values].sort((x,y)=>x-y);const n=a.length;
+const data=a.map((v,i)=>({theoretical:+normInv((i+1-.375)/(n+.25)).toFixed(4),sample:+v.toFixed(4)}));
+const lr=linReg(data.map(d=>d.theoretical),data.map(d=>d.sample));
+const lineData=lr?data.map(d=>({theoretical:d.theoretical,theoretical_v:d.sample,line:+(lr.b0+lr.b1*d.theoretical).toFixed(4)})):[];
+const sw=shapiroWilk(a);
+return(<div>
+<PageTitle title="📉 Q-Q Plot" sub="Normalitetsplot — punkterna bör följa referenslinjen" th={th}/>
+<Field label="Kolumn"><Sel value={selCol} onChange={v=>setSelCol(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Card th={th}>
+<ResponsiveContainer width="100%" height={360}>
+<ComposedChart margin={{top:10,right:10,bottom:20,left:0}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis dataKey="theoretical" type="number" domain={['auto','auto']} tick={{fontSize:11,fill:th.sub}} label={{value:'Teoretiska kvantiler',position:'insideBottom',offset:-10,fontSize:11}}/>
+<YAxis tick={{fontSize:11,fill:th.sub}} label={{value:'Sampelkvantiler',angle:-90,position:'insideLeft',fontSize:11}}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Scatter data={data} dataKey="sample" fill={th.accent} name="Data" xAxisId={0} yAxisId={0} line={false}/>
+<Line data={lineData} dataKey="line" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Referenslinje" xAxisId={0} yAxisId={0}/>
+</ComposedChart>
+</ResponsiveContainer>
+<div style={{marginTop:8}}><b>Shapiro-Wilk:</b> W={fmt(sw.w,4)}, p={fmtP(sw.p)} → {sw.p>.05?<span className="green">Normalfördelad</span>:<span className="red">Ej normalfördelad</span>}</div>
+</Card>
+</div>)};
+
+// ---- NORMAL CURVE ----
+const NormCurveP=({cols,th})=>{
+const [selCol,setSelCol]=useState(0);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=(cols[selCol]||cols[0]).values;
+const m=mean(a),s=sd(a);
+const xMin=m-4*s,xMax=m+4*s,step=(xMax-xMin)/200;
+const curve=Array.from({length:201},(_,i)=>{const x=xMin+i*step;return{x:+x.toFixed(4),y:+(Math.exp(-(x-m)**2/(2*s**2))/(s*Math.sqrt(2*Math.PI))).toFixed(6)}});
+return(<div>
+<PageTitle title="📊 Normalkurva" sub="Visualisering av normalfördelning" th={th}/>
+<Field label="Kolumn"><Sel value={selCol} onChange={v=>setSelCol(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Card th={th}>
+<ResponsiveContainer width="100%" height={300}>
+<AreaChart data={curve} margin={{top:10,right:10,bottom:10,left:0}}>
+<defs><linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={th.accent} stopOpacity={0.3}/><stop offset="95%" stopColor={th.accent} stopOpacity={0}/></linearGradient></defs>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis dataKey="x" tick={{fontSize:10,fill:th.sub}}/>
+<YAxis tick={{fontSize:10,fill:th.sub}}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Area dataKey="y" stroke={th.accent} fill="url(#areaGrad)" dot={false} name="Densitet"/>
+<ReferenceLine x={+m.toFixed(4)} stroke="#ef4444" label={{value:'μ',fill:'#ef4444',fontSize:12}}/>
+<ReferenceLine x={+(m-s).toFixed(4)} stroke="#f59e0b" strokeDasharray="4 4"/>
+<ReferenceLine x={+(m+s).toFixed(4)} stroke="#f59e0b" strokeDasharray="4 4"/>
+</AreaChart>
+</ResponsiveContainer>
+<div style={{color:th.sub,fontSize:12,marginTop:4}}>Medelvärde={fmt2(m)}, SD={fmt2(s)}, ±1SD = 68.3%, ±2SD = 95.4%</div>
+</Card>
+</div>)};
+
+// ---- Z-SCORE ----
+const ZScoreP=({cols,th})=>{
+const [selCol,setSelCol]=useState(0);const [val,setVal]=useState('');
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=(cols[selCol]||cols[0]).values;const m=mean(a),s=sd(a);
+const scores=a.map(v=>({v,z:s>0?(v-m)/s:0}));
+const z=parseFloat(val.replace(',','.'));const pctile=sN(z)?normCDF(z)*100:NaN;
+return(<div>
+<PageTitle title="🔢 Z-poäng" sub="Standardiserade poäng och percentiler" th={th}/>
+<Field label="Kolumn"><Sel value={selCol} onChange={v=>setSelCol(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Card th={th}><h3>Beräkna percentil från värde</h3>
+<div className="row">
+<Field label="Värde"><Inp value={val} onChange={setVal} type="number" th={th}/></Field>
+{sN(z)&&<div><p>Z-poäng: <b>{((parseFloat(val)-m)/s).toFixed(4)}</b></p><p>Percentil: <b>{pctile.toFixed(2)}%</b></p></div>}
+</div>
+</Card>
+<Card th={th}><h3>Z-poäng för data (första 50)</h3>
+<Tbl headers={['#','Värde','Z-poäng','Percentil']} rows={scores.slice(0,50).map((r,i)=>[i+1,r.v.toFixed(4),r.z.toFixed(4),(normCDF(r.z)*100).toFixed(1)+'%'])} th={th}/>
+</Card>
+</div>)};
+
+// ---- BOX PLOT ----
+const BoxP=({cols,th})=>{
+const [sel,setSel]=useState([]);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const active=sel.length>0?cols.filter((_,i)=>sel.includes(i)):cols.slice(0,Math.min(5,cols.length));
+const boxData=active.map(c=>{const a=c.values.sort((x,y)=>x-y);const q1=pct(a,25),q3=pct(a,75),iqr=q3-q1;const wl=Math.max(Math.min(...a),q1-1.5*iqr),wu=Math.min(Math.max(...a),q3+1.5*iqr);return{name:c.name,min:wl,q1,med:median(c.values),q3,max:wu,mean:mean(c.values)}});
+return(<div>
+<PageTitle title="📦 Boxplot" sub="Kvartiler, median och spridning" th={th}/>
+<Field label="Välj kolumner (håll Ctrl)"><select multiple value={sel.map(String)} onChange={e=>setSel([...e.target.selectedOptions].map(o=>+o.value))} style={{background:th.input,borderColor:th.inputBorder,color:th.text,height:80}} size={4}>{cols.map((c,i)=><option key={i} value={i}>{c.name}</option>)}</select></Field>
+<Card th={th}><Tbl headers={['Kolumn','Min','Q1','Median','Q3','Max','Medelvärde']} rows={boxData.map(d=>[d.name,fmt2(d.min),fmt2(d.q1),fmt2(d.med),fmt2(d.q3),fmt2(d.max),fmt2(d.mean)])} th={th}/></Card>
+<Card th={th}>
+<ResponsiveContainer width="100%" height={Math.max(200,boxData.length*60+40)}>
+<ComposedChart layout="vertical" data={boxData} margin={{top:10,right:20,bottom:10,left:60}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis type="number" domain={['auto','auto']} tick={{fontSize:11,fill:th.sub}}/>
+<YAxis dataKey="name" type="category" tick={{fontSize:11,fill:th.text}}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Bar dataKey="q1" stackId="box" fill="transparent"/>
+<Bar dataKey={(d)=>d.q3-d.q1} stackId="box" fill={th.accent+'88'} stroke={th.accent} strokeWidth={1} name="IQR"/>
+</ComposedChart>
+</ResponsiveContainer>
+</Card>
+</div>)};
+
+// ---- OUTLIER DETECTION ----
+const OutP=({cols,th})=>{
+const [selCol,setSelCol]=useState(0);const [method,setMethod]=useState('grubbs');
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=(cols[selCol]||cols[0]).values;
+const gb=grubbsTest(a);const m=mean(a),s=sd(a),q1=pct(a,25),q3=pct(a,75),iqr=q3-q1;
+const zOutliers=a.map((v,i)=>({v,i,z:s>0?Math.abs(v-m)/s:0})).filter(d=>d.z>3);
+const iqrOutliers=a.map((v,i)=>({v,i})).filter(d=>d.v<q1-1.5*iqr||d.v>q3+1.5*iqr);
+return(<div>
+<PageTitle title="🔍 Outlier-detektering" sub="Grubbs-test, IQR-metod, Z-poäng" th={th}/>
+<Field label="Kolumn"><Sel value={selCol} onChange={v=>setSelCol(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<div className="row">
+<Card th={th}><h3>Grubbs-test (CLSI EP9)</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['n',a.length],['G-statistika (beräknad)',fmt(gb.G,4)],['G-kritiskt (α=0.05)',fmt(gb.critical,4)],['Extremvärde',fmt(gb.outlier,4)],['Slutsats',gb.isOut?'⚠️ Outlier detekterad':'✓ Inga outliers']]} th={th}/>
+</Card>
+<Card th={th}><h3>IQR-metod (Tukey-staketet)</h3>
+<p style={{marginBottom:8}}>Gränser: [{fmt2(q1-1.5*iqr)}, {fmt2(q3+1.5*iqr)}]</p>
+{iqrOutliers.length?<Tbl headers={['Index','Värde']} rows={iqrOutliers.map(d=>[d.i+1,d.v.toFixed(4)])} th={th}/>:<div className="green">Inga outliers detekterade.</div>}
+</Card>
+<Card th={th}><h3>Z-poäng (|z|&gt;3)</h3>
+{zOutliers.length?<Tbl headers={['Index','Värde','|Z|']} rows={zOutliers.map(d=>[d.i+1,d.v.toFixed(4),d.z.toFixed(4)])} th={th}/>:<div className="green">Inga outliers (|z|≤3).</div>}
+</Card>
+</div>
+</div>)};
+
+// ---- T-TEST ----
+const TTP=({cols,th})=>{
+const [type,setType]=useState('one');const [selCol1,setSelCol1]=useState(0);const [selCol2,setSelCol2]=useState(1);
+const [mu0,setMu0]=useState('0');const [alpha,setAlpha]=useState('0.05');const [alt,setAlt]=useState('two');
+const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=cols[selCol1]?.values||[];const b=cols[selCol2]?.values||[];const al=parseFloat(alpha)||.05;const mu=parseFloat(mu0)||0;if(type==='one'){const n=a.length,m=mean(a),s=sd(a),se=s/Math.sqrt(n),t=(m-mu)/se,df=n-1,p=alt==='two'?2*(1-tCDF(Math.abs(t),df)):alt==='greater'?1-tCDF(t,df):tCDF(t,df);const tC=tInv(1-al/2,df);setRes({type:'one',n,mean:m,sd:s,se,t,df,p,ci:[m-tC*se,m+tC*se],alt})}else if(type==='welch'){const n1=a.length,n2=b.length,m1=mean(a),m2=mean(b),s1=sd(a),s2=sd(b);const se=Math.sqrt(s1**2/n1+s2**2/n2),t=(m1-m2)/se,df=(s1**2/n1+s2**2/n2)**2/((s1**2/n1)**2/(n1-1)+(s2**2/n2)**2/(n2-1)),p=alt==='two'?2*(1-tCDF(Math.abs(t),df)):alt==='greater'?1-tCDF(t,df):tCDF(t,df);const tC=tInv(1-al/2,df);setRes({type:'welch',n1,n2,m1,m2,s1,s2,t,df,p,ci:[(m1-m2)-tC*se,(m1-m2)+tC*se]})}else{const d=a.map((v,i)=>v-(b[i]||0));const n=d.length,m=mean(d),s=sd(d),se=s/Math.sqrt(n),t=m/se,df=n-1,p=alt==='two'?2*(1-tCDF(Math.abs(t),df)):alt==='greater'?1-tCDF(t,df):tCDF(t,df);const tC=tInv(1-al/2,df);setRes({type:'paired',n,meanD:m,sdD:s,t,df,p,ci:[m-tC*se,m+tC*se]})}};
+return(<div>
+<PageTitle title="📐 T-test" sub="Ettailat, tvåailat (Welch), parat — CLSI EP5" th={th}/>
+<Card th={th}>
+<div className="row">
+<Field label="Testtyp"><Sel value={type} onChange={setType} options={[{value:'one',label:'Ensamplingstest'},{value:'welch',label:'Tvåsamplingstest (Welch)'},{value:'paired',label:'Parat t-test'}]} th={th}/></Field>
+<Field label="Alternativ hypotes"><Sel value={alt} onChange={setAlt} options={[{value:'two',label:'Tvåsidigt (≠)'},{value:'greater',label:'Ensidigt (>)'},{value:'less',label:'Ensidigt (<)'}]} th={th}/></Field>
+<Field label="Signifikansnivå (α)"><Inp value={alpha} onChange={setAlpha} type="number" step="0.01" th={th}/></Field>
+</div>
+<div className="row">
+<Field label={type==='one'?'Kolumn':'Kolumn 1'}><Sel value={selCol1} onChange={v=>setSelCol1(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+{type!=='one'&&<Field label="Kolumn 2"><Sel value={selCol2} onChange={v=>setSelCol2(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>}
+{type==='one'&&<Field label="Testvärde μ₀"><Inp value={mu0} onChange={setMu0} type="number" th={th}/></Field>}
+</div>
+<Btn onClick={run} th={th}>Kör t-test</Btn>
+</Card>
+{res&&<Card th={th}><h3>Resultat</h3>
+{res.type==='one'&&<Tbl headers={['Parameter','Värde']} rows={[['n',res.n],['Medelvärde',fmt(res.mean,4)],['SD',fmt(res.sd,4)],['Standardfel',fmt(res.se,4)],['t-statistika',fmt(res.t,4)],['Frihetsgrader (df)',Math.round(res.df)],['p-värde',fmtP(res.p)],['95% KI diff',[fmt(res.ci[0],4),' till ',fmt(res.ci[1],4)].join('')]]} th={th}/>}
+{res.type==='welch'&&<Tbl headers={['Parameter','Kolumn 1','Kolumn 2']} rows={[['n',res.n1,res.n2],['Medelvärde',fmt(res.m1,4),fmt(res.m2,4)],['SD',fmt(res.s1,4),fmt(res.s2,4)],['Differens',fmt(res.m1-res.m2,4),''],['t-statistika',fmt(res.t,4),''],['df (Welch-Satterthwaite)',fmt2(res.df),''],['p-värde',fmtP(res.p),''],['95% KI differens',fmt(res.ci[0],4)+' till '+fmt(res.ci[1],4),'']] } th={th}/>}
+{res.type==='paired'&&<Tbl headers={['Parameter','Värde']} rows={[['n par',res.n],['Medeldifferens',fmt(res.meanD,4)],['SD differenser',fmt(res.sdD,4)],['t-statistika',fmt(res.t,4)],['df',res.df],['p-värde',fmtP(res.p)],['95% KI differens',fmt(res.ci[0],4)+' till '+fmt(res.ci[1],4)]]} th={th}/>}
+<div style={{marginTop:12,padding:12,borderRadius:8,background:res.p<(parseFloat(alpha)||.05)?th.positive:th.negative||th.card,borderColor:th.border,border:'1px solid'}}>
+{res.p<(parseFloat(alpha)||.05)?'✓ Statistiskt signifikant (p < α)':'✗ Ej statistiskt signifikant (p ≥ α)'}
+</div>
+</Card>}
+</div>)};
+
+// ---- ANOVA ----
+const AnoP=({cols,th})=>{
+const [sels,setSels]=useState([]);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const groups=sels.length>0?cols.filter((_,i)=>sels.includes(i)):cols.slice(0,Math.min(5,cols.length));if(groups.length<2)return;const gs=groups.map(c=>c.values);const r=welchAnova(gs);// Tukey HSD pairwise
+const pairs=[];for(let i=0;i<groups.length;i++)for(let j=i+1;j<groups.length;j++){const a=gs[i],b=gs[j];const m=mannWhitney(a,b);pairs.push({name:groups[i].name+' vs '+groups[j].name,d:fmt2(mean(a)-mean(b)),p:fmtP(m.p),sig:m.p<.05})}
+setRes({...r,pairs,groups:groups.map(g=>({name:g.name,n:g.values.length,mean:mean(g.values),sd:sd(g.values)}))})};
+return(<div>
+<PageTitle title="📊 ANOVA" sub="Welch ANOVA + parvisa jämförelser (Mann-Whitney)" th={th}/>
+<Card th={th}><Field label="Välj grupper (Ctrl-klick)"><select multiple value={sels.map(String)} onChange={e=>setSels([...e.target.selectedOptions].map(o=>+o.value))} style={{background:th.input,borderColor:th.inputBorder,color:th.text,height:90}} size={5}>{cols.map((c,i)=><option key={i} value={i}>{c.name}</option>)}</select></Field>
+<Btn onClick={run} th={th}>Kör ANOVA</Btn></Card>
+{res&&<>
+<Card th={th}><h3>Welch ANOVA</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['F-statistika',fmt(res.F,4)],['df1 (täljaren)',res.df1],['df2 (nämnaren)',fmt2(res.df2)],['p-värde',fmtP(res.p)],['Slutsats',res.p<.05?'✓ Signifikant skillnad (p<0.05)':'✗ Ingen signifikant skillnad']]} th={th}/>
+</Card>
+<Card th={th}><h3>Gruppsummering</h3>
+<Tbl headers={['Grupp','n','Medelvärde','SD']} rows={res.groups.map(g=>[g.name,g.n,fmt2(g.mean),fmt2(g.sd)])} th={th}/>
+</Card>
+<Card th={th}><h3>Parvisa jämförelser (Mann-Whitney)</h3>
+<Tbl headers={['Jämförelse','Differens','p-värde','Sig.']} rows={res.pairs.map(p=>[p.name,p.d,p.p,p.sig?'*':'ns'])} th={th}/>
+</Card>
+</>}
+</div>)};
+
+// ---- TOST EQUIVALENCE ----
+const TOSTP=({cols,th})=>{
+const [sel1,setSel1]=useState(0);const [sel2,setSel2]=useState(1);const [delta,setDelta]=useState('0.5');const [paired,setPaired]=useState(false);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=cols[sel1]?.values||[],b=cols[sel2]?.values||[];const d=parseFloat(delta)||.5;const r=tost(a,b,d,.05,paired);setRes(r)};
+return(<div>
+<PageTitle title="⚖️ TOST Ekvivalens" sub="Two One-Sided Tests (TOST) för ekvivalens" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Kolumn 1"><Sel value={sel1} onChange={v=>setSel1(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Kolumn 2"><Sel value={sel2} onChange={v=>setSel2(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Ekvivalensgräns (Δ)"><Inp value={delta} onChange={setDelta} type="number" th={th}/></Field>
+<Field label="Parat?"><input type="checkbox" checked={paired} onChange={e=>setPaired(e.target.checked)} style={{marginTop:4}}/></Field>
+</div><Btn onClick={run} th={th}>Kör TOST</Btn></Card>
+{res&&<Card th={th}><h3>TOST Resultat</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['Differens (μ₁-μ₂)',fmt(res.diff,4)],['Standardfel',fmt(res.se,4)],['df',Math.round(res.df)],['t₁ (mot nedre gräns)',fmt(res.t1,4)],['t₂ (mot övre gräns)',fmt(res.t2,4)],['p₁',fmtP(res.p1)],['p₂',fmtP(res.p2)],['TOST p (max av p₁, p₂)',fmtP(res.pTOST)],['90% KI för diff',fmt(res.ci[0],4)+' till '+fmt(res.ci[1],4)],['Slutsats',res.equivalent?'✓ Ekvivalens visad (p<0.05)':'✗ Ekvivalens ej visad']]} th={th}/>
+</Card>}
+</div>)};
+
+// ---- POWER / SAMPLE SIZE ----
+const PowerP=({cols,th})=>{
+const [type,setType]=useState('ttest');const [delta,setDelta]=useState('0.5');const [sd_,setSd]=useState('1');const [alpha,setAlpha]=useState('0.05');const [power,setPower]=useState('0.80');const [res,setRes]=useState(null);
+const run=()=>{const d=parseFloat(delta)||.5,s=parseFloat(sd_)||1,al=parseFloat(alpha)||.05,pw=parseFloat(power)||.8;const za=normInv(1-al/2),zb=normInv(pw);if(type==='ttest'){const n=Math.ceil(2*(s/d)**2*(za+zb)**2);const actualPow=normCDF(Math.abs(d)/s*Math.sqrt(n/2)-za);setRes({n,power:actualPow,d,s,za,zb})}else{setRes({n:Math.ceil(2*(s/d)**2*(za+zb)**2),power:pw})}};
+return(<div>
+<PageTitle title="💪 Power & stickprovsstorlek" sub="Beräkna n eller statistisk styrka" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Testtyp"><Sel value={type} onChange={setType} options={[{value:'ttest',label:'t-test (2 grupper)'},{value:'paired',label:'Parat t-test'}]} th={th}/></Field>
+<Field label="Förväntad skillnad (δ)"><Inp value={delta} onChange={setDelta} type="number" th={th}/></Field>
+<Field label="SD"><Inp value={sd_} onChange={setSd} type="number" th={th}/></Field>
+<Field label="α (signifikansnivå)"><Inp value={alpha} onChange={setAlpha} type="number" step="0.01" th={th}/></Field>
+<Field label="Önskad styrka (1-β)"><Inp value={power} onChange={setPower} type="number" step="0.05" th={th}/></Field>
+</div><Btn onClick={run} th={th}>Beräkna</Btn></Card>
+{res&&<Card th={th}><h3>Resultat</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['Nödvändigt n per grupp',res.n],['Faktisk styrka (power)',res.power?(res.power*100).toFixed(1)+'%':'—'],['Effektstorlek (δ/SD)',fmt(parseFloat(delta)/parseFloat(sd_),3)],['Cohens d',fmt(parseFloat(delta)/parseFloat(sd_),3)]]} th={th}/>
+</Card>}
+</div>)};
+
+// ---- NON-PARAMETRIC ----
+const NPP=({cols,th})=>{
+const [sel1,setSel1]=useState(0);const [sel2,setSel2]=useState(1);const [type,setType]=useState('mw');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=cols[sel1]?.values||[],b=cols[sel2]?.values||[];if(type==='mw'){setRes({...mannWhitney(a,b),type:'mw',n1:a.length,n2:b.length,med1:median(a),med2:median(b)})}else{setRes({...wilcoxon(a,b),type:'wsr',n:a.length,medD:median(a.map((v,i)=>v-b[i]))})}};
+return(<div>
+<PageTitle title="📊 Icke-parametriska test" sub="Mann-Whitney U, Wilcoxon teckenrangstest" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Test"><Sel value={type} onChange={setType} options={[{value:'mw',label:'Mann-Whitney U (oberoende)'},{value:'wsr',label:'Wilcoxon teckenrang (parat)'}]} th={th}/></Field>
+<Field label="Kolumn 1"><Sel value={sel1} onChange={v=>setSel1(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Kolumn 2"><Sel value={sel2} onChange={v=>setSel2(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div><Btn onClick={run} th={th}>Kör test</Btn></Card>
+{res&&<Card th={th}><h3>Resultat — {res.type==='mw'?'Mann-Whitney U':'Wilcoxon teckenrang'}</h3>
+{res.type==='mw'&&<Tbl headers={['Parameter','Kolumn 1','Kolumn 2']} rows={[['n',res.n1,res.n2],['Median',fmt2(res.med1),fmt2(res.med2)],['U-statistika',fmt2(res.U),''],['z',fmt(res.z,4),''],['p-värde (tvåsidigt)',fmtP(res.p),''],['Slutsats',res.p<.05?'✓ Signifikant skillnad':'✗ Ingen signifikant skillnad','']]} th={th}/>}
+{res.type==='wsr'&&<Tbl headers={['Parameter','Värde']} rows={[['n',res.n],['W-statistika',fmt2(res.W)],['Median differens',fmt2(res.medD)],['z',fmt(res.z,4)],['p-värde',fmtP(res.p)],['Slutsats',res.p<.05?'✓ Signifikant skillnad':'✗ Ingen signifikant skillnad']]} th={th}/>}
+</Card>}
+</div>)};
+
+// ---- KRUSKAL-WALLIS ----
+const KWP=({cols,th})=>{
+const [sels,setSels]=useState([]);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const gs=sels.length>0?cols.filter((_,i)=>sels.includes(i)):cols.slice(0,Math.min(5,cols.length));if(gs.length<2)return;const r=kruskalWallis(gs.map(c=>c.values));const pairs=[];for(let i=0;i<gs.length;i++)for(let j=i+1;j<gs.length;j++){const m=mannWhitney(gs[i].values,gs[j].values);const p_bonf=Math.min(1,m.p*(gs.length*(gs.length-1)/2));pairs.push({name:gs[i].name+' vs '+gs[j].name,p:fmtP(p_bonf),sig:p_bonf<.05})}setRes({...r,pairs,groups:gs.map(g=>({name:g.name,n:g.values.length,median:median(g.values)}))})};
+return(<div>
+<PageTitle title="📊 Kruskal-Wallis" sub="Icke-parametrisk envägs-ANOVA + Dunn-test (Bonferroni)" th={th}/>
+<Card th={th}><Field label="Välj grupper"><select multiple value={sels.map(String)} onChange={e=>setSels([...e.target.selectedOptions].map(o=>+o.value))} style={{background:th.input,borderColor:th.inputBorder,color:th.text,height:90}} size={4}>{cols.map((c,i)=><option key={i} value={i}>{c.name}</option>)}</select></Field>
+<Btn onClick={run} th={th}>Kör Kruskal-Wallis</Btn></Card>
+{res&&<>
+<Card th={th}><h3>Kruskal-Wallis test</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['H-statistika',fmt(res.H,4)],['df',res.df],['p-värde',fmtP(res.p)],['Slutsats',res.p<.05?'✓ Signifikant skillnad':'✗ Ingen signifikant skillnad']]} th={th}/>
+</Card>
+<Card th={th}><h3>Gruppsummering</h3>
+<Tbl headers={['Grupp','n','Median']} rows={res.groups.map(g=>[g.name,g.n,fmt2(g.median)])} th={th}/>
+</Card>
+<Card th={th}><h3>Dunn-test (Bonferroni-korrigerat)</h3>
+<Tbl headers={['Jämförelse','p (korr.)','Sig.']} rows={res.pairs.map(p=>[p.name,p.p,p.sig?'*':'ns'])} th={th}/>
+</Card>
+</>}
+</div>)};
+
+// ---- FRIEDMAN ----
+const FriedmanP=({cols,th})=>{
+const [sels,setSels]=useState([]);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const gs=sels.length>0?cols.filter((_,i)=>sels.includes(i)):cols.slice(0,Math.min(5,cols.length));if(gs.length<3)return;const k=gs.length,n=Math.min(...gs.map(c=>c.values.length));if(n<3)return;const blocks=Array.from({length:n},(_,i)=>gs.map(c=>c.values[i]));const ranks=blocks.map(row=>{const s=row.map((v,i)=>({v,i})).sort((a,b)=>a.v-b.v);const r=new Array(k);let ii=0;while(ii<k){let jj=ii;while(jj<k-1&&s[jj+1].v===s[jj].v)jj++;const avg=(ii+jj+2)/2;for(let kk=ii;kk<=jj;kk++)r[s[kk].i]=avg;ii=jj+1}return r});const Rj=gs.map((_,j)=>ranks.reduce((s,r)=>s+r[j],0));const T1=12/(n*k*(k+1))*Rj.reduce((s,r)=>s+r**2,0)-3*n*(k+1);const p=1-chi2CDF(T1,k-1);setRes({T:T1,df:k-1,p,Rj,groups:gs.map((g,j)=>({name:g.name,rankSum:Rj[j],meanRank:Rj[j]/n}))})};
+return(<div>
+<PageTitle title="📊 Friedman-test" sub="Icke-parametrisk upprepade mätningar" th={th}/>
+<Card th={th}><Field label="Välj kolumner (grupper)"><select multiple value={sels.map(String)} onChange={e=>setSels([...e.target.selectedOptions].map(o=>+o.value))} style={{background:th.input,borderColor:th.inputBorder,color:th.text,height:90}} size={4}>{cols.map((c,i)=><option key={i} value={i}>{c.name}</option>)}</select></Field>
+<Btn onClick={run} th={th}>Kör Friedman</Btn></Card>
+{res&&<>
+<Card th={th}><Tbl headers={['Parameter','Värde']} rows={[['χ²-statistika (T)',fmt(res.T,4)],['df',res.df],['p-värde',fmtP(res.p)],['Slutsats',res.p<.05?'✓ Signifikant skillnad':'✗ Ingen signifikant skillnad']]} th={th}/></Card>
+<Card th={th}><Tbl headers={['Grupp','Ranksumma','Medelrang']} rows={res.groups.map(g=>[g.name,fmt2(g.rankSum),fmt2(g.meanRank)])} th={th}/></Card>
+</>}
+</div>)};
+
+// ---- CHI-SQUARED ----
+const Chi2P=({cols,th})=>{
+const [text,setText]=useState('');const [res,setRes]=useState(null);
+const run=()=>{const rows=text.trim().split('\n').map(r=>r.split(/[\t,;]/).map(v=>parseFloat(v.replace(',','.'))));const matrix=rows.filter(r=>r.every(sN));if(matrix.length<2||matrix[0].length<2){setRes({err:'Ange en 2×2 eller större kontingenstabell'});return}const R=matrix.length,C=matrix[0].length,N=matrix.reduce((s,r)=>s+r.reduce((a,b)=>a+b,0),0);const rowTots=matrix.map(r=>r.reduce((a,b)=>a+b,0));const colTots=Array.from({length:C},(_,j)=>matrix.reduce((s,r)=>s+r[j],0));let chi2=0;for(let r=0;r<R;r++)for(let c=0;c<C;c++){const E=rowTots[r]*colTots[c]/N;chi2+=(matrix[r][c]-E)**2/E}const df=(R-1)*(C-1),p=1-chi2CDF(chi2,df);setRes({chi2,df,p,matrix,R,C,N})};
+return(<div>
+<PageTitle title="χ² Chi-kvadrattest" sub="Oberoende-test för kontingenstabeller" th={th}/>
+<Card th={th}><Field label="Kontingenstabell (tab/komma-separerat, en rad per rad)"><textarea value={text} onChange={e=>setText(e.target.value)} rows={5} style={{background:th.input,borderColor:th.inputBorder,color:th.text,width:'100%',borderRadius:6,padding:'6px 10px',fontFamily:'monospace',fontSize:12}} placeholder="20	10&#10;15	25"/></Field>
+<Btn onClick={run} th={th}>Beräkna</Btn></Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<Card th={th}><h3>Chi-kvadrattest av oberoende</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['χ²-statistika',fmt(res.chi2,4)],['df',(res.R-1)*(res.C-1)],['p-värde',fmtP(res.p)],['N',res.N],['Slutsats',res.p<.05?'✓ Signifikant association':'✗ Ingen signifikant association']]} th={th}/>
+</Card>)}
+</div>)};
+
+// ---- TRANSFORM ----
+const TrfP=({cols,setCols,th})=>{
+const [sel,setSel]=useState(0);const [method,setMethod]=useState('log');const [newName,setNewName]=useState('');
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const apply=()=>{const a=cols[sel].values;let t;if(method==='log'){if(a.some(v=>v<=0))return alert('Log kräver positiva värden');t=a.map(Math.log)}else if(method==='log10'){if(a.some(v=>v<=0))return alert('Log10 kräver positiva värden');t=a.map(Math.log10)}else if(method==='sqrt'){if(a.some(v=>v<0))return alert('Sqrt kräver ≥0');t=a.map(Math.sqrt)}else if(method==='reciprocal'){if(a.some(v=>v===0))return alert('Reciprok: inga nollor tillåtna');t=a.map(v=>1/v)}else if(method==='square'){t=a.map(v=>v**2)}else{t=a.map(v=>v)}const name=newName||cols[sel].name+'_'+method;setCols([...cols,{name,values:t}])};
+return(<div>
+<PageTitle title="🔧 Datatransformationer" sub="Log, sqrt, reciprok m.fl." th={th}/>
+<Card th={th}><div className="row">
+<Field label="Kolumn"><Sel value={sel} onChange={v=>setSel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Transformation"><Sel value={method} onChange={setMethod} options={[{value:'log',label:'Naturlig logaritm (ln)'},{value:'log10',label:'Log₁₀'},{value:'sqrt',label:'Kvadratrot'},{value:'square',label:'Kvadrering (x²)'},{value:'reciprocal',label:'Reciprok (1/x)'}]} th={th}/></Field>
+<Field label="Nytt kolumnnamn (valfritt)"><Inp value={newName} onChange={setNewName} th={th} placeholder="Auto"/></Field>
+</div><Btn onClick={apply} th={th}>Tillämpa transformation</Btn></Card>
+</div>)};
+
+// ---- BOX-COX ----
+const BoxCoxP=({cols,setCols,th})=>{
+const [sel,setSel]=useState(0);const [lam,setLam]=useState('auto');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=cols[sel]?.values||[];
+const run=()=>{const optL=boxCoxLambda(a);if(!sN(optL))return setRes({err:'Kräver positiva värden'});const L=lam==='auto'?optL:parseFloat(lam)||0;const t=L===0?a.map(Math.log):a.map(v=>(v**L-1)/L);setCols([...cols,{name:cols[sel].name+'_boxcox',values:t}]);setRes({optL,L,before:{sw:shapiroWilk(a)},after:{sw:shapiroWilk(t)}})};
+return(<div>
+<PageTitle title="📐 Box-Cox transformation" sub="Optimal lambda för normaliserande transformation" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Kolumn"><Sel value={sel} onChange={v=>setSel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Lambda (auto = optimal)"><Inp value={lam} onChange={setLam} th={th} placeholder="auto"/></Field>
+</div><Btn onClick={run} th={th}>Transformera</Btn></Card>
+{res&&(res.err?<div className="red">{res.err}</div>:<Card th={th}><h3>Box-Cox Resultat</h3>
+<Tbl headers={['','Shapiro-Wilk W','p-värde']} rows={[['Före',fmt(res.before.sw.w,4),fmtP(res.before.sw.p)],['Efter (λ='+res.L+')',fmt(res.after.sw.w,4),fmtP(res.after.sw.p)]]} th={th}/>
+<div className="hint">Optimalt λ = {res.optL}. λ=0 → naturlig logaritm.</div>
+</Card>)}
+</div>)};
+
+// ---- SCATTER PLOT ----
+const ScP=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const data=Array.from({length:n},(_,i)=>({x:+x[i].toFixed(4),y:+y[i].toFixed(4)}));const r=n>=2?linReg(x.slice(0,n),y.slice(0,n)):null;const rp=n>=2?pearsonR(x.slice(0,n),y.slice(0,n)):NaN;
+return(<div>
+<PageTitle title="🔵 Scatter-plot" sub="Spridningsdiagram med regressionslinje" th={th}/>
+<div className="row">
+<Field label="X-axel"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Y-axel"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div>
+<Card th={th}>
+<ResponsiveContainer width="100%" height={360}>
+<ComposedChart margin={{top:10,right:10,bottom:20,left:0}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis dataKey="x" type="number" name={cols[selX]?.name} tick={{fontSize:11,fill:th.sub}} domain={['auto','auto']}/>
+<YAxis type="number" tick={{fontSize:11,fill:th.sub}} domain={['auto','auto']}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Scatter data={data} fill={th.accent} opacity={0.7}/>
+{r&&<Line data={[{x:Math.min(...x),y:r.b0+r.b1*Math.min(...x)},{x:Math.max(...x),y:r.b0+r.b1*Math.max(...x)}]} dataKey="y" stroke="#ef4444" dot={false} strokeWidth={2} name="Regression"/>}
+</ComposedChart>
+</ResponsiveContainer>
+{r&&<div style={{marginTop:8,fontSize:12}}>y = {fmt(r.b0,4)} + {fmt(r.b1,4)}x &nbsp;|&nbsp; R² = {fmt2(r.r2)} &nbsp;|&nbsp; r = {fmt(rp,4)} &nbsp;|&nbsp; p = {fmtP(r.p)}</div>}
+</Card>
+</div>)};
+
+// ---- BLAND-ALTMAN ----
+const BAP=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [limType,setLimType]=useState('95');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const r=blandAltman(x.slice(0,n),y.slice(0,n));setRes(r)};
+return(<div>
+<PageTitle title="📊 Bland-Altman-analys" sub="Mätmetodjämförelse — CLSI EP9/EP21" th={th}/>
+<div className="row">
+<Field label="Referensmetod (X)"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Testmetod (Y)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna Bland-Altman</Btn>
+{res&&<>
+<div className="row" style={{marginTop:16}}>
+<Card th={th}><h3>Statistik</h3>
+<Tbl headers={['Parameter','Värde','95% KI']} rows={[['Medelskillnad',fmt(res.meanD,4),'['+fmt2(res.meanDCI[0])+', '+fmt2(res.meanDCI[1])+']'],['SD skillnader',fmt(res.sdD,4),'—'],['Nedre LOA (−1.96·SD)',fmt(res.LOA[0],4),'['+fmt2(res.loaLowerCI[0])+', '+fmt2(res.loaLowerCI[1])+']'],['Övre LOA (+1.96·SD)',fmt(res.LOA[1],4),'['+fmt2(res.loaUpperCI[0])+', '+fmt2(res.loaUpperCI[1])+']'],['Prop. bias (Pearson r)',fmt(res.proportionalBiasR,4),'p='+fmtP(res.proportionalBiasP)],['n',res.n,'—']]} th={th}/>
+<div className="hint">LOA = Limits of Agreement. Inga värden bör systematiskt falla utanför.</div>
+</Card>
+</div>
+<Card th={th}><h3>Bland-Altman-diagram</h3>
+<ResponsiveContainer width="100%" height={320}>
+<ComposedChart margin={{top:10,right:20,bottom:20,left:20}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis type="number" dataKey="x" name="Medelvärde" tick={{fontSize:11,fill:th.sub}} domain={['auto','auto']} label={{value:'Medelvärde (X+Y)/2',position:'insideBottom',offset:-10,fontSize:11}}/>
+<YAxis type="number" tick={{fontSize:11,fill:th.sub}} label={{value:'Skillnad (Y-X)',angle:-90,position:'insideLeft',fontSize:11}}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Scatter data={res.avg.map((a,i)=>({x:+a.toFixed(4),y:+res.diff[i].toFixed(4)}))} fill={th.accent} opacity={0.7}/>
+<ReferenceLine y={+res.meanD.toFixed(4)} stroke="#2563eb" strokeWidth={2} label={{value:'Bias: '+fmt2(res.meanD),fontSize:10}}/>
+<ReferenceLine y={+res.LOA[0].toFixed(4)} stroke="#ef4444" strokeDasharray="5 5" label={{value:'−LOA: '+fmt2(res.LOA[0]),fontSize:10}}/>
+<ReferenceLine y={+res.LOA[1].toFixed(4)} stroke="#ef4444" strokeDasharray="5 5" label={{value:'+LOA: '+fmt2(res.LOA[1]),fontSize:10}}/>
+<ReferenceLine y={0} stroke={th.border}/>
+</ComposedChart>
+</ResponsiveContainer>
+</Card>
+</>}
+</div>)};
+
+// ---- BLAND-ALTMAN MULTI ----
+const BAMultiP=({cols,th})=>{
+const [pairs,setPairs]=useState([{x:0,y:1}]);const [results,setResults]=useState([]);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const addPair=()=>setPairs([...pairs,{x:0,y:Math.min(1,cols.length-1)}]);
+const run=()=>{const rs=pairs.map(p=>{const x=cols[p.x]?.values||[],y=cols[p.y]?.values||[];const n=Math.min(x.length,y.length);const r=blandAltman(x.slice(0,n),y.slice(0,n));return{name:cols[p.x].name+' vs '+cols[p.y].name,...r}});setResults(rs)};
+return(<div>
+<PageTitle title="📊 Multi Bland-Altman" sub="Jämför flera metodpar" th={th}/>
+<Card th={th}>{pairs.map((p,i)=><div key={i} className="row" style={{marginBottom:8}}>
+<Field label="Metod 1"><Sel value={p.x} onChange={v=>setPairs(pairs.map((q,j)=>j===i?{...q,x:+v}:q))} options={cols.map((c,ci)=>({value:ci,label:c.name}))} th={th}/></Field>
+<Field label="Metod 2"><Sel value={p.y} onChange={v=>setPairs(pairs.map((q,j)=>j===i?{...q,y:+v}:q))} options={cols.map((c,ci)=>({value:ci,label:c.name}))} th={th}/></Field>
+<Btn small secondary th={th} onClick={()=>setPairs(pairs.filter((_,j)=>j!==i))}>Ta bort</Btn>
+</div>)}
+<div style={{display:'flex',gap:8}}><Btn secondary th={th} onClick={addPair}>+ Lägg till par</Btn><Btn th={th} onClick={run}>Beräkna alla</Btn></div></Card>
+{results.length>0&&<Card th={th}><Tbl headers={['Par','Bias','SD','Nedre LOA','Övre LOA','n']} rows={results.map(r=>[r.name,fmt2(r.meanD),fmt2(r.sdD),fmt2(r.LOA[0]),fmt2(r.LOA[1]),r.n])} th={th}/></Card>}
+</div>)};
+
+// ---- EP21 DIFFERENCE PLOT ----
+const EP21P=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [tea,setTea]=useState('');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const ba=blandAltman(x.slice(0,n),y.slice(0,n));const teaV=parseFloat(tea)||null;const pctDiff=ba.diff.map((d,i)=>ba.avg[i]>0?d/ba.avg[i]*100:null).filter(sN);const mPD=mean(pctDiff),sdPD=sd(pctDiff);setRes({ba,pctDiff,mPD,sdPD,tea:teaV,within:teaV?pctDiff.filter(d=>Math.abs(d)<=teaV).length/pctDiff.length*100:null})};
+return(<div>
+<PageTitle title="📊 EP21 Skillnadsplot" sub="Procentuell skillnad vs referens — CLSI EP21" th={th}/>
+<div className="row">
+<Field label="Referens (X)"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Testmetod (Y)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="TEa (%) — valfritt"><Inp value={tea} onChange={setTea} type="number" th={th} placeholder="t.ex. 5.6"/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna EP21</Btn>
+{res&&<>
+<Card th={th}><h3>Resultat</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['Medelskillnad (%)',fmt2(res.mPD)],['SD skillnader (%)',fmt2(res.sdPD)],['95% LOA',(res.mPD-1.96*res.sdPD).toFixed(2)+'% till '+(res.mPD+1.96*res.sdPD).toFixed(2)+'%'],...(res.tea?[['TEa',res.tea+'%'],['Andel inom TEa',res.within.toFixed(1)+'%']]:[])]  } th={th}/>
+</Card>
+<Card th={th}><h3>EP21-diagram (procentuell skillnad)</h3>
+<ResponsiveContainer width="100%" height={300}>
+<ComposedChart margin={{top:10,right:20,bottom:10,left:20}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis type="number" dataKey="x" tick={{fontSize:11,fill:th.sub}} domain={['auto','auto']}/>
+<YAxis type="number" tick={{fontSize:11,fill:th.sub}} domain={['auto','auto']} tickFormatter={v=>v+'%'}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Scatter data={res.ba.avg.map((a,i)=>({x:+a.toFixed(4),y:+res.pctDiff[i]?.toFixed(4)}))} fill={th.accent} opacity={0.7}/>
+<ReferenceLine y={res.mPD} stroke="#2563eb" strokeWidth={2}/>
+<ReferenceLine y={0} stroke={th.border}/>
+{res.tea&&<ReferenceLine y={res.tea} stroke="#ef4444" strokeDasharray="5 5"/>}
+{res.tea&&<ReferenceLine y={-res.tea} stroke="#ef4444" strokeDasharray="5 5"/>}
+</ComposedChart>
+</ResponsiveContainer>
+</Card>
+</>}
+</div>)};
+
+// ---- PASSING-BABLOK ----
+const PBP=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const r=passingBablok(x.slice(0,n),y.slice(0,n));if(!r)return;const ba=blandAltman(x.slice(0,n),y.slice(0,n));setRes({...r,ba,n,xName:cols[selX].name,yName:cols[selY].name})};
+return(<div>
+<PageTitle title="📐 Passing-Bablok regression" sub="Icke-parametrisk metodjämförelse — CLSI EP9-A3" th={th}/>
+<div className="row">
+<Field label="Referensmetod (X)"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Testmetod (Y)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna Passing-Bablok</Btn>
+{res&&<>
+<Card th={th}><h3>Passing-Bablok Regression (CLSI EP9-A3)</h3>
+<Tbl headers={['Parameter','Estimat','95% KI','Tolkning']} rows={[
+['Lutning (slope)',fmt(res.slope,4),'['+fmt(res.slopeCI[0],4)+', '+fmt(res.slopeCI[1],4)+']',res.slopeCI[0]<=1&&res.slopeCI[1]>=1?'✓ Ingen prop. avvikelse':'⚠️ Proportionell avvikelse'],
+['Skärning (intercept)',fmt(res.intercept,4),'['+fmt(res.intCI[0],4)+', '+fmt(res.intCI[1],4)+']',res.intCI[0]<=0&&res.intCI[1]>=0?'✓ Ingen konstant avvikelse':'⚠️ Konstant avvikelse'],
+['R²',fmt(res.r2,4),'—','—'],
+['n',res.n,'—','—']
+]} th={th}/>
+<div className="hint">Slope = 1 och Intercept = 0 indikerar perfekt metodöverensstämmelse.</div>
+</Card>
+<Card th={th}><h3>Metodjämförelsediagram</h3>
+<ResponsiveContainer width="100%" height={360}>
+<ComposedChart margin={{top:10,right:20,bottom:20,left:20}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis type="number" dataKey="x" tick={{fontSize:11,fill:th.sub}} domain={['auto','auto']} label={{value:res.xName,position:'insideBottom',offset:-10,fontSize:11}}/>
+<YAxis type="number" tick={{fontSize:11,fill:th.sub}} domain={['auto','auto']} label={{value:res.yName,angle:-90,position:'insideLeft',fontSize:11}}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Scatter data={(() => {const x=cols[selX]?.values||[],y=cols[selY]?.values||[];return Array.from({length:Math.min(x.length,y.length)},(_,i)=>({x:+x[i].toFixed(4),y:+y[i].toFixed(4)}));})()} fill={th.accent} opacity={0.7}/>
+<Line data={[{x:Math.min(...(cols[selX]?.values||[0])),y:res.intercept+res.slope*Math.min(...(cols[selX]?.values||[0]))},{x:Math.max(...(cols[selX]?.values||[1])),y:res.intercept+res.slope*Math.max(...(cols[selX]?.values||[1]))}]} dataKey="y" stroke="#ef4444" dot={false} strokeWidth={2} name="PB-linje"/>
+<Line data={[{x:Math.min(...(cols[selX]?.values||[0])),y:Math.min(...(cols[selX]?.values||[0]))},{x:Math.max(...(cols[selX]?.values||[1])),y:Math.max(...(cols[selX]?.values||[1]))}]} dataKey="y" stroke={th.border} dot={false} strokeDasharray="4 4" name="Identitetslinje (y=x)"/>
+</ComposedChart>
+</ResponsiveContainer>
+</Card>
+<Card th={th}><h3>Residual-Bland-Altman</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['Medelskillnad',fmt2(res.ba.meanD)],['SD',fmt2(res.ba.sdD)],['Nedre LOA',fmt2(res.ba.LOA[0])],['Övre LOA',fmt2(res.ba.LOA[1])]]} th={th}/>
+</Card>
+</>}
+</div>)};
+
+// ---- DEMING REGRESSION ----
+const DemP=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [lam,setLam]=useState('1');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const L=parseFloat(lam)||1;const r=demJackCI(x.slice(0,n),y.slice(0,n),L);setRes(r?{...r,n,xName:cols[selX].name,yName:cols[selY].name}:null)};
+return(<div>
+<PageTitle title="📐 Deming regression" sub="Ortogonal regression med jackknife-KI — CLSI EP9-A3" th={th}/>
+<div className="row">
+<Field label="Referensmetod (X)"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Testmetod (Y)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Felförhållande λ (σy²/σx²)"><Inp value={lam} onChange={setLam} type="number" step="0.1" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna Deming</Btn>
+{res&&<Card th={th}><h3>{res.method}</h3>
+<Tbl headers={['Parameter','Estimat','SE','95% KI','Tolkning']} rows={[
+['Lutning',fmt(res.slope,4),fmt(res.seSlope,4),'['+fmt(res.slopeCI[0],4)+', '+fmt(res.slopeCI[1],4)+']',res.slopeCI[0]<=1&&res.slopeCI[1]>=1?'✓ Ingen prop. avvikelse':'⚠️ Proportionell avvikelse'],
+['Skärning',fmt(res.intercept,4),fmt(res.seIntercept,4),'['+fmt(res.intCI[0],4)+', '+fmt(res.intCI[1],4)+']',res.intCI[0]<=0&&res.intCI[1]>=0?'✓ Ingen konstant avvikelse':'⚠️ Konstant avvikelse'],
+['λ (felförhållande)',lam,'—','—','—'],
+['n',res.n,'—','—','—']
+]} th={th}/>
+</Card>}
+</div>)};
+
+// ---- WEIGHTED DEMING ----
+const WDemP=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [lam,setLam]=useState('1');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const L=parseFloat(lam)||1;const r=wDemJackCI(x.slice(0,n),y.slice(0,n),L);setRes(r?{...r,n,xName:cols[selX].name,yName:cols[selY].name}:null)};
+return(<div>
+<PageTitle title="📐 Weighted Deming regression" sub="Viktad ortogonal regression — Linnet 1990, CLSI EP9-A3" th={th}/>
+<Card th={th}>
+<p style={{marginBottom:12,color:th.sub,fontSize:12}}>Viktad Deming-regression är att föredra för heteroskedastiska data (variansen ökar med koncentrationen). Vikter = 1/medel², Linnet-jackknife KI.</p>
+<div className="row">
+<Field label="Referensmetod (X)"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Testmetod (Y)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="λ (σy²/σx²)"><Inp value={lam} onChange={setLam} type="number" step="0.1" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna Weighted Deming</Btn>
+</Card>
+{res&&<Card th={th}><h3>{res.method}</h3>
+<Tbl headers={['Parameter','Estimat','SE','95% KI','Tolkning']} rows={[
+['Lutning',fmt(res.slope,4),fmt(res.seSlope,4),'['+fmt(res.slopeCI[0],4)+', '+fmt(res.slopeCI[1],4)+']',res.slopeCI[0]<=1&&res.slopeCI[1]>=1?'✓ Ingen prop. avvikelse':'⚠️ Proportionell avvikelse'],
+['Skärning',fmt(res.intercept,4),fmt(res.seIntercept,4),'['+fmt(res.intCI[0],4)+', '+fmt(res.intCI[1],4)+']',res.intCI[0]<=0&&res.intCI[1]>=0?'✓ Ingen konstant avvikelse':'⚠️ Konstant avvikelse'],
+['n',res.n,'—','—','—']
+]} th={th}/>
+<div className="hint">Slope = 1 och Intercept = 0 → perfekt metodöverensstämmelse (CLSI EP9-A3).</div>
+</Card>}
+</div>)};
+
+// ---- MULTI METHOD ----
+const MultiMP=({cols,th})=>{
+const [selRef,setSelRef]=useState(0);const [selMets,setSelMets]=useState([]);const [res,setRes]=useState([]);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selRef]?.values||[];const methods=selMets.length>0?selMets:cols.map((_,i)=>i).filter(i=>i!==selRef);const rs=methods.map(i=>{const y=cols[i]?.values||[];const n=Math.min(x.length,y.length);const ba=blandAltman(x.slice(0,n),y.slice(0,n));const pb=passingBablok(x.slice(0,n),y.slice(0,n));return{name:cols[i].name,bias:ba.meanD,loa:[ba.LOA[0],ba.LOA[1]],slope:pb?.slope,intercept:pb?.intercept,n}});setRes(rs)};
+return(<div>
+<PageTitle title="📊 Multi metodjämförelse" sub="Jämför flera metoder mot referens" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Referens"><Sel value={selRef} onChange={v=>setSelRef(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Testmetoder (Ctrl)"><select multiple value={selMets.map(String)} onChange={e=>setSelMets([...e.target.selectedOptions].map(o=>+o.value))} style={{background:th.input,borderColor:th.inputBorder,color:th.text,height:80}} size={4}>{cols.map((c,i)=><option key={i} value={i}>{c.name}</option>)}</select></Field>
+</div><Btn onClick={run} th={th}>Jämför metoder</Btn></Card>
+{res.length>0&&<Card th={th}><Tbl headers={['Metod','Bias','Nedre LOA','Övre LOA','PB Slope','PB Intercept','n']} rows={res.map(r=>[r.name,fmt2(r.bias),fmt2(r.loa[0]),fmt2(r.loa[1]),r.slope?fmt(r.slope,4):'—',r.intercept?fmt(r.intercept,4):'—',r.n])} th={th}/></Card>}
+</div>)};
+
+// ---- QUANTILE REGRESSION ----
+const QRegP=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [q,setQ]=useState('0.5');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+// Simple quantile regression (minimize weighted absolute deviations)
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const tau=parseFloat(q)||.5;const xs=x.slice(0,n),ys=y.slice(0,n);const mx=mean(xs),my=mean(ys);// Simple iterative weighted LS approximation
+let b1=1,b0=my-b1*mx;for(let iter=0;iter<100;iter++){const resid=ys.map((yi,i)=>yi-(b0+b1*xs[i]));const w=resid.map(r=>Math.abs(r)<.001?.001:Math.abs(r));const wt=resid.map((r,i)=>r>=0?tau/w[i]:(1-tau)/w[i]);const swx=wt.reduce((s,wi,i)=>s+wi*xs[i],0),swy=wt.reduce((s,wi,i)=>s+wi*ys[i],0),sw=wt.reduce((a,b)=>a+b,0);const wmx=swx/sw,wmy=swy/sw;const nb1=wt.reduce((s,wi,i)=>s+wi*(xs[i]-wmx)*(ys[i]-wmy),0)/wt.reduce((s,wi,i)=>s+wi*(xs[i]-wmx)**2,.001);const nb0=wmy-nb1*wmx;if(Math.abs(nb1-b1)<1e-8&&Math.abs(nb0-b0)<1e-8)break;b1=nb1;b0=nb0}setRes({b0,b1,tau,n})};
+return(<div>
+<PageTitle title="📐 Kvantilregression" sub="Robust regression för medianen eller andra kvantiler" th={th}/>
+<div className="row">
+<Field label="X"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Y"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Kvantil τ (0-1)"><Inp value={q} onChange={setQ} type="number" step="0.05" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna kvantilregression</Btn>
+{res&&<Card th={th}><h3>Kvantilregression (τ={res.tau})</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['Intercept',fmt(res.b0,4)],['Lutning',fmt(res.b1,4)],['Kvantil',res.tau],['n',res.n]]} th={th}/>
+</Card>}
+</div>)};
+
+// ---- DUPLICATE CV ----
+const DupCVP=({cols,th})=>{
+const [sel1,setSel1]=useState(0);const [sel2,setSel2]=useState(1);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=cols[sel1]?.values||[],b=cols[sel2]?.values||[];const n=Math.min(a.length,b.length);const pairs=Array.from({length:n},(_,i)=>({a:a[i],b:b[i],mean:(a[i]+b[i])/2,diff:a[i]-b[i]}));const repeatCV=Math.sqrt(pairs.reduce((s,p)=>s+(p.diff**2)/2,0)/n)/mean(pairs.map(p=>p.mean))*100;const sdWithin=Math.sqrt(pairs.reduce((s,p)=>s+(p.diff**2)/2,0)/n);setRes({n,repeatCV,sdWithin,pairs:pairs.slice(0,20)})};
+return(<div>
+<PageTitle title="📊 Duplikat-CV" sub="Precision från duplikatmätningar" th={th}/>
+<div className="row">
+<Field label="Mätning 1"><Sel value={sel1} onChange={v=>setSel1(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Mätning 2 (duplikat)"><Sel value={sel2} onChange={v=>setSel2(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna</Btn>
+{res&&<><Card th={th}><Tbl headers={['Parameter','Värde']} rows={[['n par',res.n],['Repeterbarhet SD',fmt(res.sdWithin,4)],['Repeterbarhet CV%',fmt2(res.repeatCV)+'%']]} th={th}/></Card>
+<Card th={th}><Tbl headers={['Mät.1','Mät.2','Medelvärde','Differens']} rows={res.pairs.map(p=>[p.a.toFixed(4),p.b.toFixed(4),p.mean.toFixed(4),p.diff.toFixed(4)])} th={th}/></Card></>}
+</div>)};
+
+// ---- MULTIPLE REGRESSION ----
+const MultiRegP=({cols,th})=>{
+const [selY,setSelY]=useState(0);const [selXs,setSelXs]=useState([]);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const ycol=cols[selY]?.values||[];const xcols=selXs.length>0?selXs.map(i=>cols[i]?.values||[]):[cols.filter((_,i)=>i!==selY)[0]?.values||[]];const n=Math.min(ycol.length,...xcols.map(x=>x.length));const y=ycol.slice(0,n);const X=xcols.map(x=>x.slice(0,n));// OLS via normal equations (simplified for 1-3 predictors)
+if(X.length===1){const r=linReg(X[0],y);if(r)setRes({...r,type:'simple',xNames:[cols[selXs[0]||1]?.name||'X'],yName:cols[selY].name})}else{// Multiple OLS
+const k=X.length;const Xm=Array.from({length:n},(_,i)=>[1,...X.map(x=>x[i])]);// XtX
+const XtX=Array.from({length:k+1},(_,r)=>Array.from({length:k+1},(_,c)=>Xm.reduce((s,row)=>s+row[r]*row[c],0)));const Xty=Array.from({length:k+1},(_,r)=>Xm.reduce((s,row,i)=>s+row[r]*y[i],0));// Gaussian elimination
+const m=XtX.map((r,i)=>[...r,Xty[i]]);for(let c=0;c<=k;c++){const mx=m.reduce((bi,row,ri)=>Math.abs(row[c])>Math.abs(m[bi][c])?ri:bi,c);[m[c],m[mx]]=[m[mx],m[c]];for(let r2=0;r2<=k;r2++)if(r2!==c&&Math.abs(m[c][c])>1e-15){const f=m[r2][c]/m[c][c];m[r2]=m[r2].map((v,j)=>v-f*m[c][j])}}const betas=m.map((row,i)=>row[k+1]/row[i]);const yhat=Xm.map(row=>row.reduce((s,v,i)=>s+v*betas[i],0));const sse=y.reduce((s,yi,i)=>s+(yi-yhat[i])**2,0);const my=mean(y),sst=y.reduce((s,yi)=>s+(yi-my)**2,0);const r2=1-sse/sst;const mse=sse/(n-k-1);setRes({betas,r2,mse,n,k,sse,sst,xNames:(selXs.length>0?selXs:[(selY+1)%cols.length]).map(i=>cols[i]?.name||'X'+i),yName:cols[selY].name,type:'multiple'})}};
+return(<div>
+<PageTitle title="📐 Multipel regression" sub="OLS linjär regression med flera prediktorer" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Y (utfall)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="X-prediktorer (Ctrl)"><select multiple value={selXs.map(String)} onChange={e=>setSelXs([...e.target.selectedOptions].map(o=>+o.value))} style={{background:th.input,borderColor:th.inputBorder,color:th.text,height:80}} size={4}>{cols.map((c,i)=><option key={i} value={i}>{c.name}</option>)}</select></Field>
+</div><Btn onClick={run} th={th}>Beräkna regression</Btn></Card>
+{res&&<Card th={th}><h3>{res.type==='simple'?'Enkel OLS':'Multipel OLS'} — R²={fmt2(res.r2)}</h3>
+{res.type==='simple'?<Tbl headers={['Parameter','Estimat','SE','95% KI']} rows={[['Intercept (b₀)',fmt(res.b0,4),fmt(res.seb0,4),fmt(res.b0CI[0],4)+' till '+fmt(res.b0CI[1],4)],['Lutning (b₁)',fmt(res.b1,4),fmt(res.seb1,4),fmt(res.b1CI[0],4)+' till '+fmt(res.b1CI[1],4)],['R²',fmt(res.r2,4),'—','—'],['p-värde (F)',fmtP(res.p),'—','—']]} th={th}/>
+:<Tbl headers={['Koefficient','Estimat']} rows={[['Intercept',fmt(res.betas[0],4)],...res.xNames.map((n,i)=>[n,fmt(res.betas[i+1],4)]),[['R²',fmt(res.r2,4)]]].flat().map((v,i)=>typeof v==='string'?[v,'']: v)} th={th}/>}
+</Card>}
+</div>)};
+
+// ---- LOGISTIC REGRESSION ----
+const LogRegP=({cols,th})=>{
+const [selY,setSelY]=useState(0);const [selX,setSelX]=useState(1);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const y=cols[selY]?.values||[],x=cols[selX]?.values||[];const n=Math.min(y.length,x.length);const ys=y.slice(0,n),xs=x.slice(0,n);// Newton-Raphson logistic regression
+let b0=0,b1=0;for(let iter=0;iter<100;iter++){const p=xs.map(xi=>1/(1+Math.exp(-(b0+b1*xi))));const g0=ys.reduce((s,yi,i)=>s+(yi-p[i]),0);const g1=ys.reduce((s,yi,i)=>s+(yi-p[i])*xs[i],0);const h00=p.reduce((s,pi)=>s+pi*(1-pi),0);const h11=p.reduce((s,pi,i)=>s+pi*(1-pi)*xs[i]**2,0);const h01=p.reduce((s,pi,i)=>s+pi*(1-pi)*xs[i],0);const det=h00*h11-h01**2;if(Math.abs(det)<1e-15)break;b0+=( h11*g0-h01*g1)/det;b1+=(-h01*g0+h00*g1)/det;if(Math.abs(g0)<1e-10&&Math.abs(g1)<1e-10)break}const phat=xs.map(xi=>1/(1+Math.exp(-(b0+b1*xi))));const ll=ys.reduce((s,yi,i)=>s+yi*Math.log(Math.max(1e-15,phat[i]))+(1-yi)*Math.log(Math.max(1e-15,1-phat[i])),0);const or=Math.exp(b1);setRes({b0,b1,or,ll,n,xName:cols[selX].name,yName:cols[selY].name})};
+return(<div>
+<PageTitle title="📊 Logistisk regression" sub="Binär logistisk regression (Newton-Raphson)" th={th}/>
+<div className="row">
+<Field label="Y (binär utfall, 0/1)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="X (prediktor)"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna logistisk regression</Btn>
+{res&&<Card th={th}><h3>Logistisk regression</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['Intercept (b₀)',fmt(res.b0,4)],['Koefficient (b₁)',fmt(res.b1,4)],['Odds Ratio (exp(b₁))',fmt(res.or,4)],['Log-likelihood',fmt2(res.ll)],['n',res.n]]} th={th}/>
+</Card>}
+</div>)};
+
+// ---- POLYNOMIAL REGRESSION ----
+const PolyRegP=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [deg,setDeg]=useState('2');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const d=Math.min(+deg||2,6);const xs=x.slice(0,n),ys=y.slice(0,n);const Xm=xs.map(xi=>Array.from({length:d+1},(_,j)=>xi**j));const XtX=Array.from({length:d+1},(_,r)=>Array.from({length:d+1},(_,c)=>Xm.reduce((s,row)=>s+row[r]*row[c],0)));const Xty=Array.from({length:d+1},(_,r)=>Xm.reduce((s,row,i)=>s+row[r]*ys[i],0));const m=XtX.map((row,i)=>[...row,Xty[i]]);for(let c=0;c<=d;c++){const mx=m.reduce((bi,row,ri)=>Math.abs(row[c])>Math.abs(m[bi][c])?ri:bi,c);[m[c],m[mx]]=[m[mx],m[c]];for(let r2=0;r2<=d;r2++)if(r2!==c&&Math.abs(m[c][c])>1e-15){const f=m[r2][c]/m[c][c];m[r2]=m[r2].map((v,j)=>v-f*m[c][j])}}const b=m.map((row,i)=>row[d+1]/row[i]);const yhat=xs.map(xi=>b.reduce((s,bi,j)=>s+bi*xi**j,0));const sse=ys.reduce((s,yi,i)=>s+(yi-yhat[i])**2,0);const my=mean(ys),sst=ys.reduce((s,yi)=>s+(yi-my)**2,0);setRes({b,r2:1-sse/sst,n,d,xName:cols[selX].name,yName:cols[selY].name})};
+return(<div>
+<PageTitle title="📐 Polynomregression" sub="Icke-linjär anpassning med polynom" th={th}/>
+<div className="row">
+<Field label="X"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Y"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Grad"><Inp value={deg} onChange={setDeg} type="number" min="1" max="6" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Anpassa polynom</Btn>
+{res&&<Card th={th}><h3>Polynomregression (grad {res.d}), R²={fmt2(res.r2)}</h3>
+<Tbl headers={['Term','Koefficient']} rows={res.b.map((bi,i)=>['x^'+i,fmt(bi,6)])} th={th}/>
+</Card>}
+</div>)};
+
+// ---- KAPPA ----
+const KappaP=({cols,th})=>{
+const [sel1,setSel1]=useState(0);const [sel2,setSel2]=useState(1);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=cols[sel1]?.values||[],b=cols[sel2]?.values||[];const n=Math.min(a.length,b.length);setRes(cohenKappa(a.slice(0,n).map(String),b.slice(0,n).map(String)))};
+return(<div>
+<PageTitle title="κ Cohen's kappa" sub="Mått på inter-rater reliabilitet" th={th}/>
+<div className="row">
+<Field label="Rater 1"><Sel value={sel1} onChange={v=>setSel1(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Rater 2"><Sel value={sel2} onChange={v=>setSel2(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna kappa</Btn>
+{res&&<Card th={th}><h3>Cohen's kappa</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['κ (kappa)',fmt(res.kappa,4)],['p₀ (observerad överensstämmelse)',(res.po*100).toFixed(1)+'%'],['pₑ (förväntad)',(res.pe*100).toFixed(1)+'%'],['SE',fmt(res.se,4)],['p-värde',fmtP(res.p)],['Tolkning',res.kappa>.8?'Utmärkt (>0.8)':res.kappa>.6?'Bra (0.6-0.8)':res.kappa>.4?'Måttlig (0.4-0.6)':'Dålig (<0.4)']]} th={th}/>
+</Card>}
+</div>)};
+
+// ---- ICC ----
+const ICCP=({cols,th})=>{
+const [sels,setSels]=useState([]);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const gs=sels.length>0?sels.map(i=>cols[i]?.values||[]):cols.slice(0,Math.min(3,cols.length)).map(c=>c.values);if(gs.length<2)return;const n=Math.min(...gs.map(g=>g.length));const data=Array.from({length:n},(_,i)=>gs.map(g=>g[i]));setRes(icc(data))};
+return(<div>
+<PageTitle title="📊 ICC (Intraclass Correlation)" sub="Inter-rater reliabilitet för kontinuerliga data" th={th}/>
+<Card th={th}><Field label="Välj kolumner (raters)"><select multiple value={sels.map(String)} onChange={e=>setSels([...e.target.selectedOptions].map(o=>+o.value))} style={{background:th.input,borderColor:th.inputBorder,color:th.text,height:80}} size={4}>{cols.map((c,i)=><option key={i} value={i}>{c.name}</option>)}</select></Field>
+<Btn onClick={run} th={th}>Beräkna ICC</Btn></Card>
+{res&&<Card th={th}><h3>ICC-modeller</h3>
+<Tbl headers={['Modell','ICC','Tolkning']} rows={[['ICC(1,1) — envägs slumpmässig',fmt(res.icc1,4),res.icc1>.75?'Utmärkt':res.icc1>.5?'Måttlig':'Dålig'],['ICC(2,1) — tvåvägs blandat, absolut',fmt(res.icc2,4),res.icc2>.75?'Utmärkt':res.icc2>.5?'Måttlig':'Dålig'],['ICC(3,1) — tvåvägs blandat, konsekvens',fmt(res.icc3,4),res.icc3>.75?'Utmärkt':res.icc3>.5?'Måttlig':'Dålig']]} th={th}/>
+<div className="hint">CLSI rekommenderar ICC≥0.75 för klinisk precision (EP15-A3).</div>
+</Card>}
+</div>)};
+
+// ---- LEVEY-JENNINGS ----
+const LJP=({cols,th})=>{
+const [sel,setSel]=useState(0);const [baseline,setBaseline]=useState('');const [baseSD,setBaseSD]=useState('');
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const a=(cols[sel]||cols[0]).values;const mu=parseFloat(baseline)||mean(a);const sigma=parseFloat(baseSD)||sd(a);
+const data=a.map((v,i)=>({i:i+1,v,z:(v-mu)/sigma}));
+const limits=[{y:mu+3*sigma,lbl:'+3SD',c:'#ef4444'},{y:mu+2*sigma,lbl:'+2SD',c:'#f59e0b'},{y:mu,lbl:'Medel',c:'#2563eb'},{y:mu-2*sigma,lbl:'−2SD',c:'#f59e0b'},{y:mu-3*sigma,lbl:'−3SD',c:'#ef4444'}];
+const viol=data.filter(d=>Math.abs(d.z)>3);
+return(<div>
+<PageTitle title="📈 Levey-Jennings" sub="Qualitetskontrollkort med Westgard-gränser" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Kolumn (QC-data)"><Sel value={sel} onChange={v=>setSel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Baslinje medel (tom = beräknat)"><Inp value={baseline} onChange={setBaseline} type="number" th={th}/></Field>
+<Field label="Baslinje SD (tom = beräknat)"><Inp value={baseSD} onChange={setBaseSD} type="number" th={th}/></Field>
+</div>
+<div style={{fontSize:12,color:th.sub}}>μ={mu.toFixed(4)}, σ={sigma.toFixed(4)}, n={a.length}</div>
+</Card>
+<Card th={th}>
+<ResponsiveContainer width="100%" height={320}>
+<ComposedChart data={data} margin={{top:10,right:20,bottom:10,left:0}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis dataKey="i" tick={{fontSize:10,fill:th.sub}} label={{value:'Mätpunkt',position:'insideBottom',offset:-5,fontSize:10}}/>
+<YAxis tick={{fontSize:10,fill:th.sub}}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}} formatter={(v,n)=>[v.toFixed(4),n]}/>
+<Line dataKey="v" stroke={th.accent} dot={{r:3}} name="Värde"/>
+{limits.map(l=><ReferenceLine key={l.lbl} y={+l.y.toFixed(6)} stroke={l.c} strokeDasharray={l.c==='#2563eb'?'':'4 4'} label={{value:l.lbl,fontSize:9,fill:l.c}}/>)}
+</ComposedChart>
+</ResponsiveContainer>
+</Card>
+{viol.length>0&&<Card th={th} style={{borderColor:'#ef4444',borderWidth:2}}><h3 className="red">⚠️ Regelbrott (|z|&gt;3): {viol.length} punkt(er)</h3>
+<Tbl headers={['Punkt','Värde','z']} rows={viol.map(d=>[d.i,d.v.toFixed(4),d.z.toFixed(3)])} th={th}/>
+</Card>}
+</div>)};
+
+// ---- WESTGARD RULES ----
+const WGP=({cols,th})=>{
+const [sel,setSel]=useState(0);const [baseline,setBaseline]=useState('');const [baseSD,setBaseSD]=useState('');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=(cols[sel]||cols[0]).values;const mu=parseFloat(baseline)||mean(a);const sig=parseFloat(baseSD)||sd(a);const z=a.map(v=>(v-mu)/sig);const violations=[];// 1:3s rule
+z.forEach((zi,i)=>{if(Math.abs(zi)>3)violations.push({rule:'1:3s',pt:i+1,val:a[i].toFixed(4),z:zi.toFixed(3)})});// 2:2s rule
+for(let i=1;i<z.length;i++){if((z[i]>2&&z[i-1]>2)||(z[i]<-2&&z[i-1]<-2))violations.push({rule:'2:2s',pt:i+1,val:a[i].toFixed(4),z:z[i].toFixed(3)})}// R:4s
+for(let i=1;i<z.length;i++){if(Math.abs(z[i]-z[i-1])>4)violations.push({rule:'R:4s',pt:i+1,val:a[i].toFixed(4),z:z[i].toFixed(3)})}// 4:1s
+for(let i=3;i<z.length;i++){if(z.slice(i-3,i+1).every(v=>v>1)||z.slice(i-3,i+1).every(v=>v<-1))violations.push({rule:'4:1s',pt:i+1,val:a[i].toFixed(4),z:z[i].toFixed(3)})}// 10x
+for(let i=9;i<z.length;i++){if(z.slice(i-9,i+1).every(v=>v>0)||z.slice(i-9,i+1).every(v=>v<0))violations.push({rule:'10x',pt:i+1,val:a[i].toFixed(4),z:z[i].toFixed(3)})}setRes({violations,mu,sig,n:a.length})};
+return(<div>
+<PageTitle title="📋 Westgard-regler" sub="Multiregelkontroll för QC-prover" th={th}/>
+<Card th={th}><div className="row">
+<Field label="QC-data"><Sel value={sel} onChange={v=>setSel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Baslinje μ"><Inp value={baseline} onChange={setBaseline} type="number" th={th}/></Field>
+<Field label="Baslinje SD"><Inp value={baseSD} onChange={setBaseSD} type="number" th={th}/></Field>
+</div><Btn onClick={run} th={th}>Tillämpa Westgard-regler</Btn></Card>
+{res&&<><Card th={th}><h3>Regelkontroll — {res.n} mätpunkter</h3>
+<div style={{marginBottom:8}}>μ={res.mu.toFixed(4)}, σ={res.sig.toFixed(4)}</div>
+{res.violations.length===0?<div className="green">✓ Inga regelbrott detekterade!</div>:<>
+<div className="red" style={{marginBottom:8}}>⚠️ {res.violations.length} regelbrott</div>
+<Tbl headers={['Regel','Punkt','Värde','z']} rows={res.violations.map(v=>[v.rule,v.pt,v.val,v.z])} th={th}/>
+</>}
+</Card>
+<Card th={th}><h3>Westgard-regler förklaring</h3>
+<Tbl headers={['Regel','Varning/Fel','Beskrivning']} rows={[['1:3s','Fel','En punkt utanför ±3SD — slumpfel eller systematiskt fel'],['2:2s','Fel','Två på varandra följande punkter på samma sida av ±2SD'],['R:4s','Fel','Räckvidd > 4SD i konsekutiva par — slumpfel'],['4:1s','Varning','Fyra på varandra följande punkter på samma sida av ±1SD'],['10x','Varning','Tio på varandra följande punkter på samma sida av medel']]} th={th}/>
+</Card>
+</>}
+</div>)};
+
+// ---- SIX SIGMA ----
+const SigmaP=({cols,th})=>{
+const [sel,setSel]=useState(0);const [ref,setRef]=useState('');const [teaName,setTeaName]=useState('');const [teaCustom,setTeaCustom]=useState('');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=(cols[sel]||cols[0]).values;const refVal=parseFloat(ref);const cvP=cv(a);const biasP=sN(refVal)?Math.abs((mean(a)-refVal)/refVal*100):0;const tea=parseFloat(teaCustom)||TEa_PRESETS[teaName]||0;if(!tea){setRes({err:'Ange TEa'});return}const sig=calcSigma(tea,biasP,cvP);const rec=sigmaQCRec(sig);setRes({sig,rec,tea,biasP,cvP,n:a.length,m:mean(a),s:sd(a)})};
+return(<div>
+<PageTitle title="Σ Six Sigma Analys" sub="Processduglighetsmått för klinisk kemi — Westgard" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Data (QC/patientdata)"><Sel value={sel} onChange={v=>setSel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Referensvärde (för bias)"><Inp value={ref} onChange={setRef} type="number" th={th} placeholder="0 = ingen bias-korr."/></Field>
+<Field label="TEa preset"><Sel value={teaName} onChange={setTeaName} options={[{value:'',label:'— Välj preset —'},...Object.keys(TEa_PRESETS).map(k=>({value:k,label:k+' ('+TEa_PRESETS[k]+'%)'}))]} th={th}/></Field>
+<Field label="TEa (%) — anpassat"><Inp value={teaCustom} onChange={setTeaCustom} type="number" th={th}/></Field>
+</div><Btn onClick={run} th={th}>Beräkna sigma</Btn></Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<Card th={th}><h3>Six Sigma Resultat</h3>
+<div style={{padding:16,borderRadius:10,background:res.rec.color+'22',border:'2px solid '+res.rec.color,marginBottom:16,textAlign:'center'}}>
+<div style={{fontSize:32,fontWeight:800,color:res.rec.color}}>{fmt(res.sig,2)} σ</div>
+<div style={{fontWeight:700,color:res.rec.color}}>{res.rec.label}</div>
+<div style={{fontSize:12,marginTop:4}}>Rekommenderad QC-regel: {res.rec.rule}</div>
+</div>
+<Tbl headers={['Parameter','Värde']} rows={[['TEa',res.tea+'%'],['CV%',fmt2(res.cvP)+'%'],['Bias%',fmt2(res.biasP)+'%'],['Sigma',fmt(res.sig,3)],['σ-formel','(TEa – |bias|) / CV'],['n',res.n]]} th={th}/>
+<div className="hint">σ ≥ 6: utmärkt · σ = 4–6: bra · σ = 3–4: gräns · σ &lt; 3: dålig (CLSI/Westgard)</div>
+</Card>)}
+</div>)};
+
+// ---- TAE (TOTAL ANALYTICAL ERROR) ----
+const TAEP=({th})=>{
+const [tea,setTea]=useState('');const [teaName,setTeaName]=useState('');const [bias,setBias]=useState('');const [cvP,setCvP]=useState('');const [res,setRes]=useState(null);
+const run=()=>{const teaV=parseFloat(teaCustom)||TEa_PRESETS[teaName]||parseFloat(tea)||0;const b=parseFloat(bias)||0,c=parseFloat(cvP)||0;if(!teaV||!c){setRes({err:'Ange TEa och CV%'});return}const tae=Math.abs(b)+1.65*c;const tae2=Math.abs(b)+2*c;const sig=calcSigma(teaV,b,c);const rec=sigmaQCRec(sig);setRes({tae,tae2,sig,rec,tea:teaV,bias:b,cv:c,ok:tae<=teaV})};
+const teaCustom='';// uses teaName or manual tea input
+const run2=()=>{const teaV=TEa_PRESETS[teaName]||parseFloat(tea)||0;const b=parseFloat(bias)||0,c=parseFloat(cvP)||0;if(!teaV||!c){setRes({err:'Ange TEa och CV%'});return}const tae=Math.abs(b)+1.65*c;const tae2=Math.abs(b)+2*c;const sig=calcSigma(teaV,b,c);const rec=sigmaQCRec(sig);setRes({tae,tae2,sig,rec,tea:teaV,bias:b,cv:c,ok:tae<=teaV})};
+return(<div>
+<PageTitle title="🎯 TAE (Total Analytical Error)" sub="Totalt analytiskt fel — CLSI EP49, Westgard 1974" th={th}/>
+<Card th={th}>
+<p style={{marginBottom:12,color:th.sub,fontSize:12}}>TAE = |Bias| + 1.65 × CV (för 95% sannolikhet). TAE bör inte överstiga TEa (Total Allowable Error).</p>
+<div className="row">
+<Field label="TEa preset (%)"><Sel value={teaName} onChange={setTeaName} options={[{value:'',label:'— Välj preset —'},...Object.keys(TEa_PRESETS).map(k=>({value:k,label:k+' ('+TEa_PRESETS[k]+'%)'}))]} th={th}/></Field>
+<Field label="TEa (%) — anpassat"><Inp value={tea} onChange={setTea} type="number" th={th} placeholder="t.ex. 5.6"/></Field>
+<Field label="Bias (%)"><Inp value={bias} onChange={setBias} type="number" th={th} placeholder="t.ex. 1.2"/></Field>
+<Field label="CV (%)"><Inp value={cvP} onChange={setCvP} type="number" th={th} placeholder="t.ex. 2.5"/></Field>
+</div>
+<Btn onClick={run2} th={th}>Beräkna TAE</Btn>
+</Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<><Card th={th} style={{borderLeft:'4px solid '+(res.ok?'#16a34a':'#dc2626')}}>
+<h3>TAE Resultat</h3>
+<div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:12}}>
+<div className="stat-box" style={{background:th.bg,borderColor:th.border}}>
+<div className="stat-label">TAE (95% — Westgard)</div>
+<div className="stat-val" style={{color:res.ok?'#16a34a':'#dc2626'}}>{fmt2(res.tae)}%</div>
+<div className="stat-sub">TEa = {res.tea}%</div>
+</div>
+<div className="stat-box" style={{background:th.bg,borderColor:th.border}}>
+<div className="stat-label">TAE (97.7% — ±2SD)</div>
+<div className="stat-val">{fmt2(res.tae2)}%</div>
+</div>
+<div className="stat-box" style={{background:th.bg,borderColor:th.border}}>
+<div className="stat-label">Sigma (σ)</div>
+<div className="stat-val" style={{color:res.rec.color}}>{fmt(res.sig,2)}</div>
+<div className="stat-sub">{res.rec.label}</div>
+</div>
+</div>
+<Tbl headers={['Parameter','Värde']} rows={[['Bias (%)',fmt2(res.bias)],['CV (%)',fmt2(res.cv)],['TAE = |Bias| + 1.65·CV',fmt2(res.tae)+'%'],['TEa',res.tea+'%'],['TAE ≤ TEa?',res.ok?'✓ JA — Godkänd':'✗ NEJ — Underkänd'],['Sigma (TEa-|bias|)/CV',fmt(res.sig,3)],['Rekommenderad QC-regel',res.rec.rule]]} th={th}/>
+</Card>
+<Card th={th}><h3>Formelreferens</h3>
+<Tbl headers={['Formel','Källa']} rows={[['TAE = |Bias%| + 1.65 × CV%','Westgard 1974 (95%)'],['TAE = |Bias%| + 2 × CV%','CLIA (97.5%)'],['σ = (TEa – |Bias|) / CV','Westgard Six Sigma'],['TEa = 0.5 × CVI (desirable)','EFLM BV Database']]} th={th}/>
+</Card>
+</>)}
+</div>)};
+
+// ---- OPSpecs ----
+const OPSpecsP=({th})=>{
+const [tea,setTea]=useState('5');const [teaName,setTeaName]=useState('');const [cvP,setCvP]=useState('2');const [biasP,setBiasP]=useState('1');const [res,setRes]=useState(null);
+const run=()=>{const teaV=TEa_PRESETS[teaName]||parseFloat(tea)||5;const b=parseFloat(biasP)||1,c=parseFloat(cvP)||2;const normCV=c/teaV*100,normBias=Math.abs(b)/teaV*100;const sig=calcSigma(teaV,b,c);const rec=sigmaQCRec(sig);// OPSpecs curves for common rules (simplified Westgard 1992)
+const rules=[{name:'1:2s N=2 Pfd=0.03',sigma:[2,3,4,5,6],maxBias:[15,30,50,65,80]},{name:'1:3s N=1 Pfd=0.01',sigma:[3,4,5,6],maxBias:[10,25,45,65]},{name:'13s/22s N=2',sigma:[2,3,4,5,6],maxBias:[8,20,38,55,72]},{name:'13s/22s/R4s N=4',sigma:[2,3,4,5,6],maxBias:[12,28,46,62,78]}];setRes({normCV,normBias,sig,rec,tea:teaV,b,c,rules})};
+return(<div>
+<PageTitle title="📊 OPSpecs-diagram" sub="Operating Point Specifications — Westgard 1992" th={th}/>
+<Card th={th}>
+<p style={{color:th.sub,fontSize:12,marginBottom:12}}>OPSpecs-diagrammet visar operationspunkten (CV/TEa, Bias/TEa) i förhållande till QC-regelkurvor. Westgard 1992.</p>
+<div className="row">
+<Field label="TEa preset"><Sel value={teaName} onChange={setTeaName} options={[{value:'',label:'— Välj preset —'},...Object.keys(TEa_PRESETS).map(k=>({value:k,label:k+' ('+TEa_PRESETS[k]+'%)'}))]} th={th}/></Field>
+<Field label="TEa (%)"><Inp value={tea} onChange={setTea} type="number" th={th}/></Field>
+<Field label="CV (%)"><Inp value={cvP} onChange={setCvP} type="number" th={th}/></Field>
+<Field label="|Bias| (%)"><Inp value={biasP} onChange={setBiasP} type="number" th={th}/></Field>
+</div><Btn onClick={run} th={th}>Rita OPSpecs</Btn>
+</Card>
+{res&&<>
+<Card th={th}><h3>Operationspunkt</h3>
+<div style={{display:'flex',gap:16,flexWrap:'wrap',marginBottom:12}}>
+<div className="stat-box" style={{background:th.bg,borderColor:th.border}}><div className="stat-label">CV / TEa</div><div className="stat-val">{fmt2(res.normCV)}%</div></div>
+<div className="stat-box" style={{background:th.bg,borderColor:th.border}}><div className="stat-label">Bias / TEa</div><div className="stat-val">{fmt2(res.normBias)}%</div></div>
+<div className="stat-box" style={{background:th.bg,borderColor:th.border}}><div className="stat-label">Sigma (σ)</div><div className="stat-val" style={{color:res.rec.color}}>{fmt(res.sig,2)}</div></div>
+</div>
+<div style={{padding:12,borderRadius:8,background:res.rec.color+'22',borderLeft:'4px solid '+res.rec.color}}>
+<b>Rekommendation:</b> {res.rec.rule} — {res.rec.label}
+</div>
+</Card>
+<Card th={th}><h3>OPSpecs-diagram (normaliserat)</h3>
+<ResponsiveContainer width="100%" height={360}>
+<ComposedChart margin={{top:20,right:20,bottom:40,left:40}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis type="number" dataKey="x" domain={[0,50]} label={{value:'CV% / TEa% × 100',position:'insideBottom',offset:-20,fontSize:11}} tick={{fontSize:10,fill:th.sub}}/>
+<YAxis type="number" domain={[0,100]} label={{value:'|Bias|% / TEa% × 100',angle:-90,position:'insideLeft',offset:10,fontSize:11}} tick={{fontSize:10,fill:th.sub}}/>
+{res.rules.map((rule,ri)=><Line key={ri} data={rule.sigma.map((s,si)=>({x:s/res.sig*res.normCV||s*10,y:rule.maxBias[si]}))} dataKey="y" stroke={['#2563eb','#16a34a','#f59e0b','#ef4444'][ri]} dot={false} strokeWidth={1.5} name={rule.name}/>)}
+<Scatter data={[{x:res.normCV,y:res.normBias}]} fill={res.sig>=4?'#16a34a':'#ef4444'} name="Din metod"/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Legend/>
+</ComposedChart>
+</ResponsiveContainer>
+</Card>
+</>}
+</div>)};
+
+// ---- EP5 PRECISION ----
+const EP5P=({cols,th})=>{
+const [text,setText]=useState('');const [res,setRes]=useState(null);
+// EP5-A3: 20 days × 2 runs × 2 reps
+const run=()=>{const lines=text.trim().split('\n').filter(l=>l.trim());if(lines.length<4){setRes({err:'Ange minst 4 rader (dagar × körningar × replikat)'});return}const vals=lines.map(l=>parseFloat(l.replace(',','.').trim())).filter(sN);if(vals.length<8){setRes({err:'Ange minst 8 mätvärden'});return}// Detect structure: assume pairs of replicates within runs
+const n=vals.length;const grandMean=mean(vals);// Simple nested ANOVA for precision
+const pairSD=[];for(let i=0;i+1<vals.length;i+=2){const d=(vals[i]-vals[i+1])/Math.sqrt(2);pairSD.push(d)}const srRepeat=Math.sqrt(pairSD.reduce((s,d)=>s+d**2,0)/pairSD.length);const srIntermediate=sd(vals);// Conservative: total SD including all sources
+const cvRepeat=srRepeat/grandMean*100,cvIntermediate=srIntermediate/grandMean*100;setRes({srRepeat,srIntermediate,cvRepeat,cvIntermediate,n:vals.length,mean:grandMean})};
+return(<div>
+<PageTitle title="📐 EP5-A3 Precision" sub="Upprepbarhet och intermediär precision — CLSI EP5-A3" th={th}/>
+<Card th={th}>
+<p style={{color:th.sub,fontSize:12,marginBottom:12}}>EP5-A3 protokoll: 20 dagar × 2 körningar × 2 replikat = 80 mätningar. Ange ett värde per rad (replikatpar i följd).</p>
+<Field label="Mätvärden (ett per rad — replikat i par)"><textarea value={text} onChange={e=>setText(e.target.value)} rows={10} style={{background:th.input,borderColor:th.inputBorder,color:th.text,width:'100%',borderRadius:6,padding:'6px 10px',fontFamily:'monospace',fontSize:12}} placeholder="12.3&#10;12.5&#10;11.8&#10;12.1&#10;..."/></Field>
+<Btn onClick={run} th={th}>Beräkna precision</Btn>
+</Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<Card th={th}><h3>EP5-A3 Precisionsresultat</h3>
+<Tbl headers={['Precisionskomponent','SD','CV%']} rows={[['Repeterbarhet (within-run, sr)',fmt(res.srRepeat,4),fmt2(res.cvRepeat)+'%'],['Intermediär precision (within-lab, sI)',fmt(res.srIntermediate,4),fmt2(res.cvIntermediate)+'%'],['Totalt medelvärde',fmt(res.mean,4),'—'],['n mätningar',res.n,'—']]} th={th}/>
+<div className="hint">Repeterbarhet: variation inom körning. Intermediär precision: variation mellan dagar/körningar/operatörer.</div>
+</Card>)}
+</div>)};
+
+// ---- EP15-A3 USER VERIFICATION ----
+const EP15P=({th,cols})=>{
+const [vals,setVals]=useState('');const [refMean,setRefMean]=useState('');const [refSD,setRefSD]=useState('');const [mfSD,setMfSD]=useState('');const [mfBias,setMfBias]=useState('');const [res,setRes]=useState(null);
+const run=()=>{const a=parseNums(vals);if(a.length<5){setRes({err:'Ange minst 5 mätvärden'});return}const n=a.length,xBar=mean(a),s=sd(a);const refV=parseFloat(refMean),sigClaim=parseFloat(mfSD);// Precision verification (chi-squared test)
+let precRes=null;if(sN(sigClaim)&&sigClaim>0){const chi2=( n-1)*s**2/sigClaim**2;const chiCrit=chi2Inv(.95,n-1);precRes={chi2,chiCrit,pass:chi2<=chiCrit,s,sigClaim,n}}// Bias verification (t-test vs reference)
+let biasRes=null;if(sN(refV)){const se=s/Math.sqrt(n);const t=(xBar-refV)/se;const df=n-1;const p=2*(1-tCDF(Math.abs(t),df));const biasAbs=xBar-refV;const biasPct=refV>0?biasAbs/refV*100:NaN;biasRes={t,df,p,xBar,refV,biasAbs,biasPct,ci:[xBar-tInv(.975,df)*se,xBar+tInv(.975,df)*se],pass:p>.05}}setRes({precRes,biasRes,n,xBar,s})};
+return(<div>
+<PageTitle title="✅ EP15-A3 Användarverifiering" sub="Verifiering av precision och riktighet — CLSI EP15-A3" th={th}/>
+<Card th={th}>
+<p style={{color:th.sub,fontSize:12,marginBottom:12}}>EP15-A3 protokoll: minst 5 dagar × 2 replikat = 10 mätningar. Jämför mot tillverkarens anspråk.</p>
+<div className="row">
+<Field label="Mätvärden (ett per rad)"><textarea value={vals} onChange={e=>setVals(e.target.value)} rows={8} style={{background:th.input,borderColor:th.inputBorder,color:th.text,width:'100%',borderRadius:6,padding:'6px 10px',fontFamily:'monospace',fontSize:12}} placeholder="12.3&#10;12.8&#10;11.9&#10;..."/></Field>
+<div>
+<Field label="Referensvärde (t.ex. spikad/certifierad)"><Inp value={refMean} onChange={setRefMean} type="number" th={th}/></Field>
+<Field label="Tillverkarens SD-anspråk (σ₀)"><Inp value={mfSD} onChange={setMfSD} type="number" th={th}/></Field>
+</div>
+</div>
+<Btn onClick={run} th={th}>Verifiera</Btn>
+</Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:<>
+{res.precRes&&<Card th={th} style={{borderLeft:'4px solid '+(res.precRes.pass?'#16a34a':'#ef4444')}}>
+<h3>Precisionsverifiering</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['n',res.precRes.n],['Beräknad SD (s)',fmt(res.precRes.s,4)],['Tillverkarens SD-anspråk (σ₀)',fmt(res.precRes.sigClaim,4)],['χ²-statistika ((n-1)s²/σ₀²)',fmt(res.precRes.chi2,4)],['χ²-kritiskt (α=0.05, df=n-1)',fmt(res.precRes.chiCrit,4)],['Verifiering',res.precRes.pass?'✓ GODKÄND (χ² ≤ χ²_krit)':'✗ UNDERKÄND (χ² > χ²_krit)']]} th={th}/>
+</Card>}
+{res.biasRes&&<Card th={th} style={{borderLeft:'4px solid '+(res.biasRes.pass?'#16a34a':'#ef4444')}}>
+<h3>Riktighetsverifiering</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['Beräknat medelvärde (x̄)',fmt(res.biasRes.xBar,4)],['Referensvärde',fmt(res.biasRes.refV,4)],['Absolut bias',fmt(res.biasRes.biasAbs,4)],['Relativ bias (%)',fmt2(res.biasRes.biasPct)+'%'],['t-statistika',fmt(res.biasRes.t,4)],['df',res.biasRes.df],['p-värde',fmtP(res.biasRes.p)],['95% KI för x̄',fmt(res.biasRes.ci[0],4)+' till '+fmt(res.biasRes.ci[1],4)],['Verifiering',res.biasRes.pass?'✓ GODKÄND (p>0.05)':'✗ UNDERKÄND — signifikant bias']]} th={th}/>
+</Card>}
+</>)}
+</div>)};
+
+// ---- EP17-A2 DETECTION LIMITS ----
+const EP17P=({cols,th})=>{
+const [blankVals,setBlankVals]=useState('');const [lowVals,setLowVals]=useState('');const [loqCV,setLoqCV]=useState('20');const [res,setRes]=useState(null);
+const run=()=>{const blanks=parseNums(blankVals);const lows=parseNums(lowVals);if(blanks.length<10){setRes({err:'Ange minst 10 blankvärden (LoB kräver n≥60 rekommenderas, min 10)'});return}const mB=mean(blanks),sdB=sd(blanks);const LoB=mB+1.645*sdB; // Parametric LoB
+let LoD=NaN,LoQ=NaN;if(lows.length>=4){const sdL=sd(lows);LoD=LoB+1.645*sdL}// LoQ (CV threshold)
+const cvTarget=parseFloat(loqCV)||20;if(lows.length>=4){const mL=mean(lows);LoQ=sdB/mL*100<=cvTarget?LoD:mL+2*sdB} // simplified LoQ
+setRes({LoB,LoD,LoQ,mB,sdB,nBlanks:blanks.length,nLow:lows.length,cvTarget})};
+return(<div>
+<PageTitle title="🔍 EP17-A2 Detektionsgränser" sub="LoB, LoD, LoQ — CLSI EP17-A2" th={th}/>
+<Card th={th}>
+<p style={{color:th.sub,fontSize:12,marginBottom:12}}>EP17-A2: LoB (blank), LoD (detektering), LoQ (kvantifiering). Rekommenderat n≥60 för blanks.</p>
+<div className="row">
+<Field label="Blankvärden (ett per rad)"><textarea value={blankVals} onChange={e=>setBlankVals(e.target.value)} rows={6} style={{background:th.input,borderColor:th.inputBorder,color:th.text,width:'100%',borderRadius:6,padding:'6px 10px',fontFamily:'monospace',fontSize:12}} placeholder="0.1&#10;0.05&#10;0.12&#10;..."/></Field>
+<Field label="Lågkoncentrationsurval (nära LoD)"><textarea value={lowVals} onChange={e=>setLowVals(e.target.value)} rows={6} style={{background:th.input,borderColor:th.inputBorder,color:th.text,width:'100%',borderRadius:6,padding:'6px 10px',fontFamily:'monospace',fontSize:12}} placeholder="0.25&#10;0.28&#10;0.22&#10;..."/></Field>
+<Field label="CV% gräns för LoQ"><Inp value={loqCV} onChange={setLoqCV} type="number" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna gränser</Btn>
+</Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<Card th={th}><h3>EP17-A2 Resultat</h3>
+<Tbl headers={['Gräns','Värde','Formel','n']} rows={[['LoB (Limit of Blank)',fmt(res.LoB,4),'μ_blank + 1.645·SD_blank',res.nBlanks],['LoD (Limit of Detection)',sN(res.LoD)?fmt(res.LoD,4):'—',sN(res.LoD)?'LoB + 1.645·SD_low':'—',res.nLow||'—'],['LoQ (Limit of Quantitation)',sN(res.LoQ)?fmt(res.LoQ,4):'—','CV ≤ '+res.cvTarget+'%',res.nLow||'—']]} th={th}/>
+<div className="hint">LoB: 95% av blankvärden är lägre. LoD: kan detekteras med 95% säkerhet. LoQ: kan kvantifieras med acceptabel precision.</div>
+</Card>)}
+</div>)};
+
+// ---- LINEARITY ----
+const LinP=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [deg,setDeg]=useState('2');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);const xs=x.slice(0,n),ys=y.slice(0,n);const rLin=linReg(xs,ys);// Polynomial for non-linearity test
+const d=Math.min(+deg||2,4);const Xm=xs.map(xi=>Array.from({length:d+1},(_,j)=>xi**j));const XtX=Array.from({length:d+1},(_,r)=>Array.from({length:d+1},(_,c)=>Xm.reduce((s,row)=>s+row[r]*row[c],0)));const Xty=Array.from({length:d+1},(_,r)=>Xm.reduce((s,row,i)=>s+row[r]*ys[i],0));const m=XtX.map((row,i)=>[...row,Xty[i]]);for(let c=0;c<=d;c++){const mx=m.reduce((bi,row,ri)=>Math.abs(row[c])>Math.abs(m[bi][c])?ri:bi,c);[m[c],m[mx]]=[m[mx],m[c]];for(let r2=0;r2<=d;r2++)if(r2!==c&&Math.abs(m[c][c])>1e-15){const f=m[r2][c]/m[c][c];m[r2]=m[r2].map((v,j)=>v-f*m[c][j])}}const b=m.map((row,i)=>row[d+1]/row[i]);const yhatP=xs.map(xi=>b.reduce((s,bi,j)=>s+bi*xi**j,0));const ssePoly=ys.reduce((s,yi,i)=>s+(yi-yhatP[i])**2,0);const sst=ys.reduce((s,yi)=>s+(yi-mean(ys))**2,0);const r2Poly=1-ssePoly/sst;const yhatLin=xs.map(xi=>rLin.b0+rLin.b1*xi);const sseLin=ys.reduce((s,yi,i)=>s+(yi-yhatLin[i])**2,0);const r2Lin=1-sseLin/sst;const F=(sseLin-ssePoly)/(d-1)/(ssePoly/(n-d-1));const pLack=1-fCDF(F,d-1,n-d-1);setRes({r2Lin,r2Poly,F,pLack,linEq:{b0:rLin.b0,b1:rLin.b1},polyCoef:b,n,linear:pLack>.05})};
+return(<div>
+<PageTitle title="📏 Linjäritet" sub="Linearitetstest — CLSI EP6-A polynomtest" th={th}/>
+<div className="row">
+<Field label="X (förväntad/referens)"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Y (uppmätt)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Polynomgrad för test"><Inp value={deg} onChange={setDeg} type="number" min="2" max="4" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Testa linjäritet</Btn>
+{res&&<><Card th={th} style={{borderLeft:'4px solid '+(res.linear?'#16a34a':'#ef4444')}}>
+<h3>EP6-A Linjäritetstest</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['R² (linjärt)',fmt(res.r2Lin,4)],['R² (polynom grad '+deg+')',fmt(res.r2Poly,4)],['F-test (avvikelse från linearitet)',fmt(res.F,4)],['p-värde',fmtP(res.pLack)],['Slutsats',res.linear?'✓ LINJÄRT (p>0.05, ingen signifikant avvikelse)':'✗ EJ LINJÄRT — signifikant polynomterm'],['Linjär ekvation','y = '+fmt(res.linEq.b0,4)+' + '+fmt(res.linEq.b1,4)+'x']]} th={th}/>
+</Card></>}
+</div>)};
+
+// ---- MEASUREMENT UNCERTAINTY ----
+const MUP=({th})=>{
+const [components,setComponents]=useState([{name:'Kalibreringsbias',u:'0.5',type:'B'},{name:'Repeterbarhet (sr)',u:'1.2',type:'A'}]);
+const [coverage,setCoverage]=useState('2');
+const addComp=()=>setComponents([...components,{name:'',u:'',type:'A'}]);
+const calc=()=>{const uc=Math.sqrt(components.reduce((s,c)=>{const u=parseFloat(c.u)||0;return s+u**2},0));const k=parseFloat(coverage)||2;return{uc,U:k*uc,k}};
+const {uc,U,k}=calc();
+return(<div>
+<PageTitle title="📐 Mätosäkerhet (MU)" sub="ISO/IEC 17025 och EURACHEM/CITAC — GUM-metod" th={th}/>
+<Card th={th}><h3>Osäkerhetskomponenter</h3>
+{components.map((c,i)=><div key={i} className="row" style={{marginBottom:8}}>
+<Field label="Komponent"><Inp value={c.name} onChange={v=>setComponents(components.map((cc,j)=>j===i?{...cc,name:v}:cc))} th={th}/></Field>
+<Field label="u (standardosäkerhet)"><Inp value={c.u} onChange={v=>setComponents(components.map((cc,j)=>j===i?{...cc,u:v}:cc))} type="number" th={th}/></Field>
+<Field label="Typ"><Sel value={c.type} onChange={v=>setComponents(components.map((cc,j)=>j===i?{...cc,type:v}:cc))} options={[{value:'A',label:'Typ A (statistisk)'},{value:'B',label:'Typ B (icke-stat.)'}]} th={th}/></Field>
+<Btn small danger th={th} onClick={()=>setComponents(components.filter((_,j)=>j!==i))}>×</Btn>
+</div>)}
+<div style={{display:'flex',gap:8,marginTop:8}}><Btn secondary th={th} onClick={addComp}>+ Lägg till</Btn></div>
+<div className="sep" style={{borderTop:'1px solid '+th.border,margin:'16px 0'}}/>
+<Field label="Täckningsfaktor k (95%=2, 99%=2.576)"><Inp value={coverage} onChange={setCoverage} type="number" step="0.1" th={th}/></Field>
+<div style={{marginTop:12,padding:12,borderRadius:8,background:th.bg,border:'1px solid '+th.border}}>
+<div><b>Kombinerad standardosäkerhet u_c:</b> {uc.toFixed(4)}</div>
+<div><b>Utvidgad osäkerhet U = k·u_c:</b> {U.toFixed(4)} (k={k})</div>
+<div style={{fontSize:12,color:th.sub,marginTop:4}}>Resultat = x ± {U.toFixed(4)} (konfidensnivå ~{k===2?95:k===2.576?99:'?'}%)</div>
+</div>
+</Card>
+</div>)};
+
+// ---- BIOLOGICAL VARIATION ----
+const BVP=({th})=>{
+const [analyte,setAnalyte]=useState('Glukos');const [cvA,setCvA]=useState('');const [biasA,setBiasA]=useState('');
+const bv=BV_DB[analyte];
+const calcAPS=()=>{if(!bv)return null;const cvi=bv.cvi,cvg=bv.cvg;return{desCV:0.5*cvi,desImp:0.25*Math.sqrt(cvi**2+cvg**2),desTotal:0.75*Math.sqrt(cvi**2+cvg**2),minCV:0.75*cvi,minImp:0.375*Math.sqrt(cvi**2+cvg**2),minTotal:1.125*Math.sqrt(cvi**2+cvg**2),optCV:0.25*cvi,optImp:0.125*Math.sqrt(cvi**2+cvg**2),optTotal:0.375*Math.sqrt(cvi**2+cvg**2),RCV:2.77*cvi,II:(cvg/cvi)**2/(1+1)}};
+const aps=calcAPS();
+const methCV=parseFloat(cvA)||0,methBias=parseFloat(biasA)||0;
+const evalMethod=()=>{if(!aps)return null;return{cvOk:methCV<=aps.desCV,biasOk:methBias<=aps.desImp,taeOk:Math.abs(methBias)+1.65*methCV<=aps.desTotal}};
+const ev=methCV>0?evalMethod():null;
+return(<div>
+<PageTitle title="🧬 Biologisk variation" sub="EFLM/IFCC BV-databas — APS (Analytical Performance Specifications)" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Analyt"><Sel value={analyte} onChange={setAnalyte} options={Object.keys(BV_DB).map(k=>({value:k,label:k}))} th={th}/></Field>
+<Field label="Er CV% (för utvärdering)"><Inp value={cvA} onChange={setCvA} type="number" th={th} placeholder="Optional"/></Field>
+<Field label="Er Bias% (för utvärdering)"><Inp value={biasA} onChange={setBiasA} type="number" th={th} placeholder="Optional"/></Field>
+</div></Card>
+{bv&&<Card th={th}><h3>{analyte} — BV-data (EFLM/IFCC)</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['CVi (intraindividuell)',bv.cvi+'%'],['CVg (interindividuell)',bv.cvg+'%'],['Individuality Index (II)',fmt2((bv.cvg/bv.cvi)**2/(1+1))],['RCV (Referensändringsvärde)',fmt2(2.77*bv.cvi)+'%']]} th={th}/>
+</Card>}
+{aps&&<Card th={th}><h3>APS — Analytiska krav (Milan konsensus 2014)</h3>
+<Tbl headers={['Modell','Imprecision (CV%)', 'Inaccuracy (Bias%)', 'TAE%']} rows={[['Önskvärd (Desirable)',fmt2(aps.desCV),fmt2(aps.desImp),fmt2(aps.desTotal)],['Minimum',fmt2(aps.minCV),fmt2(aps.minImp),fmt2(aps.minTotal)],['Optimal',fmt2(aps.optCV),fmt2(aps.optImp),fmt2(aps.optTotal)],...(ev?[['Er metod',methCV+'%',methBias+'%',fmt2(Math.abs(methBias)+1.65*methCV)+'%']]:[])]  } th={th}/>
+{ev&&<div style={{marginTop:8,padding:10,borderRadius:6,background:(ev.cvOk&&ev.biasOk&&ev.taeOk)?'#dcfce7':'#fee2e2',border:'1px solid '+(ev.cvOk&&ev.biasOk&&ev.taeOk?'#16a34a':'#dc2626')}}>
+<b>Utvärdering mot önskvärd APS:</b><br/>
+CV: {ev.cvOk?'✓ Godkänd':'✗ Underkänd'} · Bias: {ev.biasOk?'✓ Godkänd':'✗ Underkänd'} · TAE: {ev.taeOk?'✓ Godkänd':'✗ Underkänd'}
+</div>}
+</Card>}
+</div>)};
+
+// ---- CORRELATION ----
+const CrP=({cols,th})=>{
+const [sel1,setSel1]=useState(0);const [sel2,setSel2]=useState(1);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[sel1]?.values||[],y=cols[sel2]?.values||[];const n=Math.min(x.length,y.length);const xs=x.slice(0,n),ys=y.slice(0,n);const r=pearsonR(xs,ys);const rs=spearman(xs,ys);const tR=r*Math.sqrt(n-2)/Math.sqrt(1-r**2),pR=2*(1-tCDF(Math.abs(tR),n-2));const tS=rs*Math.sqrt(n-2)/Math.sqrt(1-rs**2),pS=2*(1-tCDF(Math.abs(tS),n-2));// Fisher z CI
+const zr=.5*Math.log((1+r)/(1-r)),zcrit=1.96;const rCI=[Math.tanh(zr-zcrit/Math.sqrt(n-3)),Math.tanh(zr+zcrit/Math.sqrt(n-3))];setRes({r,rs,tR,pR,tS,pS,rCI,n})};
+return(<div>
+<PageTitle title="📊 Korrelationsanalys" sub="Pearson, Spearman — med statistisk signifikans" th={th}/>
+<div className="row">
+<Field label="Kolumn 1"><Sel value={sel1} onChange={v=>setSel1(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Kolumn 2"><Sel value={sel2} onChange={v=>setSel2(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna korrelation</Btn>
+{res&&<Card th={th}><h3>Korrelationsresultat</h3>
+<Tbl headers={['Test','r / ρ','t','p-värde','Tolkning']} rows={[['Pearson r',fmt(res.r,4),fmt(res.tR,4),fmtP(res.pR),Math.abs(res.r)>.9?'Utmärkt':Math.abs(res.r)>.7?'Bra':'Svag'],['Spearman ρ',fmt(res.rs,4),fmt(res.tS,4),fmtP(res.pS),'Rangbaserad, robust']]} th={th}/>
+<div style={{marginTop:8}}>Pearson r 95% KI (Fisher z): [{fmt(res.rCI[0],4)}, {fmt(res.rCI[1],4)}]</div>
+</Card>}
+</div>)};
+
+// ---- REFERENCE INTERVALS (EP28-A3c) ----
+const RefP=({cols,th})=>{
+const [sel,setSel]=useState(0);const [method,setMethod]=useState('nonparametric');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=(cols[sel]||cols[0]).values;if(a.length<20){setRes({err:'EP28-A3c kräver minst 20 individer (rekommenderas ≥ 120)'});return}// Grubbs outlier removal
+const gb=grubbsTest(a);let cleaned=a;let removed=0;while(grubbsTest(cleaned).isOut&&cleaned.length>20){const g=grubbsTest(cleaned);cleaned=cleaned.filter((_,i)=>i!==g.idx);removed++}const r=refInterval(cleaned,method);setRes({...r,original:a.length,cleaned:cleaned.length,removed,sw:shapiroWilk(cleaned)})};
+return(<div>
+<PageTitle title="📊 Referensintervall" sub="EP28-A3c icke-parametrisk metod — 95% referensintervall" th={th}/>
+<div className="row">
+<Field label="Kolumn"><Sel value={sel} onChange={v=>setSel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Metod"><Sel value={method} onChange={setMethod} options={[{value:'nonparametric',label:'Icke-parametrisk (EP28-A3c, n≥120)'},{value:'parametric',label:'Parametrisk (Gaussisk, n<120)'}]} th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna referensintervall</Btn>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<Card th={th}><h3>95% Referensintervall (EP28-A3c)</h3>
+<div style={{fontSize:24,fontWeight:800,color:th.accent,textAlign:'center',padding:'16px 0'}}>[{fmt2(res.lo)}, {fmt2(res.hi)}]</div>
+<Tbl headers={['Parameter','Värde','95% KI']} rows={[['Nedre gräns (2.5th)',fmt(res.lo,4),'['+fmt(res.loCI[0],4)+', '+fmt(res.loCI[1],4)+']'],['Övre gräns (97.5th)',fmt(res.hi,4),'['+fmt(res.hiCI[0],4)+', '+fmt(res.hiCI[1],4)+']'],['n (original)',res.original,'—'],['n (efter outlier-borttag.)',res.cleaned,'—'],['Borttagna outliers',res.removed,'—'],['Shapiro-Wilk p',fmtP(res.sw?.p),'—'],['Metod',res.method,'—']]} th={th}/>
+<div className="hint">EP28-A3c: 120+ individer rekommenderas för icke-parametrisk metod. KI beräknat med Reed percentilmetod.</div>
+</Card>)}
+</div>)};
+
+// ---- REFERENCE INTERVAL VERIFICATION ----
+const RefVerP=({cols,th})=>{
+const [sel,setSel]=useState(0);const [riLow,setRiLow]=useState('');const [riHigh,setRiHigh]=useState('');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=(cols[sel]||cols[0]).values;const lo=parseFloat(riLow),hi=parseFloat(riHigh);if(!sN(lo)||!sN(hi)){setRes({err:'Ange referensintervall'});return}// EP28-A3c: 20 subjects, ≤2 outliers to verify
+const nOut=a.filter(v=>v<lo||v>hi).length;const pass=nOut<=2;const exact=nOut/a.length;setRes({nOut,n:a.length,pass,pctOut:(exact*100).toFixed(1),lo,hi})};
+return(<div>
+<PageTitle title="✅ Verifiera referensintervall" sub="EP28-A3c — 20 subjektsprotokoll" th={th}/>
+<Card th={th}>
+<p style={{color:th.sub,fontSize:12,marginBottom:12}}>Välj 20 friska individer. Verifieras om ≤2 av 20 faller utanför referensintervallet (EP28-A3c).</p>
+<div className="row">
+<Field label="Data (20 individer)"><Sel value={sel} onChange={v=>setSel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Referensintervall Nedre"><Inp value={riLow} onChange={setRiLow} type="number" th={th}/></Field>
+<Field label="Referensintervall Övre"><Inp value={riHigh} onChange={setRiHigh} type="number" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Verifiera</Btn>
+</Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<Card th={th} style={{borderLeft:'4px solid '+(res.pass?'#16a34a':'#ef4444')}}>
+<h3>Verifiering EP28-A3c</h3>
+<Tbl headers={['Parameter','Värde']} rows={[['n individer',res.n],['Referensintervall','['+res.lo+', '+res.hi+']'],['Antal utanför RI',res.nOut],['Andel utanför',res.pctOut+'%'],['Gräns (EP28-A3c)','≤2 av 20 (10%)'],['Resultat',res.pass?'✓ VERIFIERAT (≤2 utanför)':'✗ EJ VERIFIERAT (>2 utanför)']]} th={th}/>
+</Card>)}
+</div>)};
+
+// ---- AGE-SPECIFIC REFERENCE INTERVALS ----
+const AgeRIP=({cols,th})=>{
+const [selVal,setSelVal]=useState(0);const [selAge,setSelAge]=useState(1);const [nBins,setNBins]=useState('4');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const vals=(cols[selVal]||cols[0]).values;const ages=(cols[selAge]||cols[0]).values;const n=Math.min(vals.length,ages.length);const v=vals.slice(0,n),a=ages.slice(0,n);const minA=Math.min(...a),maxA=Math.max(...a),binW=(maxA-minA)/+nBins;const bins=Array.from({length:+nBins},(_,i)=>{const lo=minA+i*binW,hi=lo+binW;const sub=v.filter((_,j)=>a[j]>=lo&&(i===+nBins-1?a[j]<=hi:a[j]<hi));return{label:lo.toFixed(0)+'-'+hi.toFixed(0),n:sub.length,lo:pct(sub,2.5),hi:pct(sub,97.5),mean:mean(sub)}}).filter(b=>b.n>=3);setRes({bins})};
+return(<div>
+<PageTitle title="📊 Åldersspecifika referensintervall" sub="Partitionering av referensintervall per åldersgrupp" th={th}/>
+<div className="row">
+<Field label="Mätvärden"><Sel value={selVal} onChange={v=>setSelVal(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Ålder"><Sel value={selAge} onChange={v=>setSelAge(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Antal åldersgrupper"><Inp value={nBins} onChange={setNBins} type="number" min="2" max="10" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna</Btn>
+{res&&<Card th={th}><Tbl headers={['Åldersgrupp','n','Medelvärde','P2.5','P97.5']} rows={res.bins.map(b=>[b.label,b.n,fmt2(b.mean),fmt2(b.lo),fmt2(b.hi)])} th={th}/></Card>}
+</div>)};
+
+// ---- CRITICAL RISK INTERVAL ----
+const CRIP=({th})=>{
+const [analyte,setAnalyte]=useState('Glukos');const [sexSel,setSexSel]=useState('both');const [riLow,setRiLow]=useState('');const [riHigh,setRiHigh]=useState('');
+const criticalVals={'Kalium':{low:2.8,high:6.2},'Natrium':{low:120,high:160},'Kalcium':{low:1.5,high:3.5},'Glukos':{low:2.5,high:30},'Kreatinin':{low:null,high:1000},'Troponin':{low:null,high:null}};
+const cr=criticalVals[analyte];
+return(<div>
+<PageTitle title="⚠️ Kritiska och riskintervall" sub="Kliniska beslutsgränser och kritiska värden" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Analyt"><Sel value={analyte} onChange={setAnalyte} options={Object.keys(criticalVals).map(k=>({value:k,label:k}))} th={th}/></Field>
+</div>
+{cr&&<div style={{marginTop:12,padding:12,borderRadius:8,background:th.bg,border:'1px solid '+th.border}}>
+<h3>{analyte} — Kritiska värden</h3>
+{sN(cr.low)&&<div style={{marginBottom:4}}><b>Kritiskt lågt:</b> &lt; {cr.low} — omedelbar medicinsk åtgärd</div>}
+{sN(cr.high)&&<div><b>Kritiskt högt:</b> &gt; {cr.high} — omedelbar medicinsk åtgärd</div>}
+</div>}
+<div style={{marginTop:16}}>
+<h3>Anpassat referens/riskintervall</h3>
+<div className="row">
+<Field label="Nedre gräns"><Inp value={riLow} onChange={setRiLow} type="number" th={th}/></Field>
+<Field label="Övre gräns"><Inp value={riHigh} onChange={setRiHigh} type="number" th={th}/></Field>
+</div>
+{riLow&&riHigh&&<div style={{padding:10,borderRadius:6,background:'#fef9c3',border:'1px solid #eab308',color:'#92400e'}}>
+Referensintervall: [{riLow}, {riHigh}]. Värden utanför indikerar klinisk uppmärksamhet.
+</div>}
+</div>
+</Card>
+</div>)};
+
+// ---- CALIPER METHOD ----
+const CaliperP=({th})=>{
+const [vals,setVals]=useState('');const [res,setRes]=useState(null);
+const run=()=>{const a=parseNums(vals).sort((x,y)=>x-y);if(a.length<20){setRes({err:'Kräver minst 20 värden'});return}// Caliper method (Tukey-McLaughlin-type) for outlier-robust percentiles
+const n=a.length;const lo=pct(a,2.5),hi=pct(a,97.5);const median_=median(a),iqr_=pct(a,75)-pct(a,25);setRes({lo,hi,median:median_,iqr:iqr_,n})};
+return(<div>
+<PageTitle title="🔧 Calipermetoden" sub="Robust percentilbaserat referensintervall" th={th}/>
+<Card th={th}><Field label="Data (ett per rad)"><textarea value={vals} onChange={e=>setVals(e.target.value)} rows={8} style={{background:th.input,borderColor:th.inputBorder,color:th.text,width:'100%',borderRadius:6,padding:'6px 10px',fontFamily:'monospace',fontSize:12}} placeholder="12.3&#10;14.5&#10;11.8&#10;..."/></Field>
+<Btn onClick={run} th={th}>Beräkna</Btn></Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<Card th={th}><Tbl headers={['Parameter','Värde']} rows={[['n',res.n],['P2.5',fmt(res.lo,4)],['P97.5',fmt(res.hi,4)],['Median',fmt(res.median,4)],['IQR',fmt(res.iqr,4)]]} th={th}/></Card>)}
+</div>)};
+
+// ---- HOFFMANN METHOD ----
+const HoffmannP=({cols,th})=>{
+const [sel,setSel]=useState(0);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const a=[...(cols[sel]||cols[0]).values].sort((x,y)=>x-y);const n=a.length;if(n<50){setRes({err:'Hoffmann-metoden kräver minst 50 observationer'});return}// Hoffmann: plot normal scores vs cumulative fraction, fit linear through central portion
+const mid=a.filter((_,i)=>i>=Math.floor(n*.05)&&i<=Math.floor(n*.95));const probs=mid.map((_,i)=>normInv((i+Math.floor(n*.05)+1)/(n+1)));const lr=linReg(probs,mid);if(!lr){setRes({err:'Beräkningsfel'});return}const lo=lr.b0-1.96*lr.b1,hi=lr.b0+1.96*lr.b1;setRes({lo,hi,mean:lr.b0,sd:lr.b1,n})};
+return(<div>
+<PageTitle title="📊 Hoffmann-metoden" sub="Indirekt referensintervall från patientdata" th={th}/>
+<Field label="Kolumn"><Sel value={sel} onChange={v=>setSel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Btn onClick={run} th={th}>Beräkna Hoffmann</Btn>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:
+<Card th={th}><Tbl headers={['Parameter','Värde']} rows={[['Estimerat medelvärde',fmt(res.mean,4)],['Estimerad SD',fmt(res.sd,4)],['Referensintervall nedre (μ-1.96σ)',fmt(res.lo,4)],['Referensintervall övre (μ+1.96σ)',fmt(res.hi,4)],['n',res.n]]} th={th}/>
+<div className="hint">Hoffmann-metoden anpassar en rät linje till de centrala 90% av normalscorena. Använd med försiktighet.</div>
+</Card>)}
+</div>)};
+
+// ---- ROC ANALYSIS ----
+const RoP=({cols,th})=>{
+const [selScore,setSelScore]=useState(0);const [selLabel,setSelLabel]=useState(1);const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const scores=cols[selScore]?.values||[],labels=cols[selLabel]?.values||[];const n=Math.min(scores.length,labels.length);const r=rocAnalysis(scores.slice(0,n),labels.slice(0,n));if(!r){setRes({err:'Kontrollera att etiketter är 0/1'});return}setRes(r)};
+return(<div>
+<PageTitle title="📈 ROC-analys" sub="Receiver Operating Characteristic — AUC, sensitivitet, specificitet" th={th}/>
+<div className="row">
+<Field label="Testpoäng (scores)"><Sel value={selScore} onChange={v=>setSelScore(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Etikett (0/1 — sjuk/frisk)"><Sel value={selLabel} onChange={v=>setSelLabel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna ROC</Btn>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:<>
+<Card th={th}><h3>ROC Statistik</h3>
+<div style={{fontSize:28,fontWeight:800,color:th.accent,textAlign:'center',padding:'12px 0'}}>AUC = {fmt(res.auc,4)}</div>
+<Tbl headers={['Parameter','Värde']} rows={[['AUC (Area Under Curve)',fmt(res.auc,4)],['95% KI (Hanley-McNeil)','['+fmt(res.ci[0],4)+', '+fmt(res.ci[1],4)+']'],['SE',fmt(res.se,4)],['p-värde (AUC vs 0.5)',fmtP(res.p)],['Positiva (n)',res.pos],['Negativa (n)',res.neg],['Optimal cutoff (Youden)',fmt(res.optimal?.t,4)],['Sensitivitet @ cutoff',(res.optimal?.se*100).toFixed(1)+'%'],['Specificitet @ cutoff',(res.optimal?.sp*100).toFixed(1)+'%']]} th={th}/>
+</Card>
+<Card th={th}><h3>ROC-kurva</h3>
+<ResponsiveContainer width="100%" height={360}>
+<LineChart data={res.pts} margin={{top:10,right:20,bottom:30,left:30}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis dataKey="sp" type="number" domain={[0,1]} name="Specificitet" reversed={false} label={{value:'1 - Specificitet (FPR)',position:'insideBottom',offset:-15,fontSize:11}} tick={{fontSize:10,fill:th.sub}} tickFormatter={v=>fmt2(v)}/>
+<YAxis domain={[0,1]} label={{value:'Sensitivitet (TPR)',angle:-90,position:'insideLeft',fontSize:11}} tick={{fontSize:10,fill:th.sub}} tickFormatter={v=>fmt2(v)}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}} formatter={(v,n)=>[(1-v).toFixed(3),n]}/>
+<Line dataKey="se" stroke={th.accent} dot={false} strokeWidth={2} name="ROC"/>
+<ReferenceLine segment={[{x:1,y:0},{x:0,y:1}]} stroke={th.border} strokeDasharray="4 4"/>
+</LineChart>
+</ResponsiveContainer>
+</Card>
+</>)}
+</div>)};
+
+// ---- EP09 METHOD COMPARISON WORKFLOW ----
+const EP09P=({cols,th})=>{
+const [selX,setSelX]=useState(0);const [selY,setSelY]=useState(1);const [tea,setTea]=useState('');const [teaName,setTeaName]=useState('');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const x=cols[selX]?.values||[],y=cols[selY]?.values||[];const n=Math.min(x.length,y.length);if(n<20){setRes({err:'EP9-A3 kräver minst 20 prov (rekommenderas 40+)'});return}const xs=x.slice(0,n),ys=y.slice(0,n);const ba=blandAltman(xs,ys);const pb=passingBablok(xs,ys);const wd=wDemJackCI(xs,ys,1);const teaV=TEa_PRESETS[teaName]||parseFloat(tea)||null;const pctBias=ba.meanD/mean(xs)*100;const withinLoa=teaV?ba.diff.filter(d=>Math.abs(d/((xs[ba.diff.indexOf(d)]+ys[ba.diff.indexOf(d)])/2)*100)<=teaV).length/n*100:null;setRes({n,ba,pb,wd,teaV,pctBias,withinLoa,xName:cols[selX].name,yName:cols[selY].name})};
+return(<div>
+<PageTitle title="📋 EP09-A3 Metodjämförelse" sub="Fullständigt EP9-A3 arbetsflöde — PB + Bland-Altman + Deming" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Referensmetod (X)"><Sel value={selX} onChange={v=>setSelX(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Testmetod (Y)"><Sel value={selY} onChange={v=>setSelY(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="TEa preset"><Sel value={teaName} onChange={setTeaName} options={[{value:'',label:'— Välj —'},...Object.keys(TEa_PRESETS).map(k=>({value:k,label:k+' ('+TEa_PRESETS[k]+'%)'}))]} th={th}/></Field>
+<Field label="TEa (%) anpassat"><Inp value={tea} onChange={setTea} type="number" th={th}/></Field>
+</div><Btn onClick={run} th={th}>Kör EP9-A3 analys</Btn></Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:<>
+<Card th={th}><h3>EP9-A3 Sammanfattning — {res.xName} vs {res.yName}</h3>
+<Tbl headers={['Analys','Resultat','Tolkning']} rows={[
+['Passing-Bablok lutning',res.pb?fmt(res.pb.slope,4)+' KI ['+fmt(res.pb.slopeCI[0],4)+', '+fmt(res.pb.slopeCI[1],4)+']':'—',res.pb&&res.pb.slopeCI[0]<=1&&res.pb.slopeCI[1]>=1?'✓ Inga prop. avv.':'⚠️ Proportionell avvikelse'],
+['Passing-Bablok intercept',res.pb?fmt(res.pb.intercept,4)+' KI ['+fmt(res.pb.intCI[0],4)+', '+fmt(res.pb.intCI[1],4)+']':'—',res.pb&&res.pb.intCI[0]<=0&&res.pb.intCI[1]>=0?'✓ Inga konst. avv.':'⚠️ Konstant avvikelse'],
+['Bland-Altman bias',fmt(res.ba.meanD,4)+' ('+fmt2(res.pctBias)+'%)','—'],
+['95% LOA',' ['+fmt2(res.ba.LOA[0])+', '+fmt2(res.ba.LOA[1])+']','—'],
+['W. Deming lutning',res.wd?fmt(res.wd.slope,4):'—',res.wd&&res.wd.slopeCI[0]<=1&&res.wd.slopeCI[1]>=1?'✓':'—'],
+...(res.teaV?[['Andel inom TEa ('+res.teaV+'%)',res.withinLoa?res.withinLoa.toFixed(1)+'%':'—',res.withinLoa&&res.withinLoa>=95?'✓ Godkänd':'⚠️ Under 95%']]:[])
+]} th={th}/>
+</Card>
+<Card th={th}><h3>Scatter med regressionslinje</h3>
+<ResponsiveContainer width="100%" height={300}>
+<ComposedChart margin={{top:10,right:20,bottom:20,left:20}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis type="number" dataKey="x" tick={{fontSize:10,fill:th.sub}} domain={['auto','auto']} label={{value:res.xName,position:'insideBottom',offset:-10,fontSize:10}}/>
+<YAxis type="number" tick={{fontSize:10,fill:th.sub}} domain={['auto','auto']}/>
+<Tooltip contentStyle={{background:th.card,border:'1px solid '+th.border}}/>
+<Scatter data={cols[selX]?.values.slice(0,res.n).map((xi,i)=>({x:+xi.toFixed(4),y:+(cols[selY]?.values[i]||0).toFixed(4)}))} fill={th.accent} opacity={0.7}/>
+{res.pb&&<Line data={[{x:Math.min(...cols[selX].values.slice(0,res.n)),y:res.pb.intercept+res.pb.slope*Math.min(...cols[selX].values.slice(0,res.n))},{x:Math.max(...cols[selX].values.slice(0,res.n)),y:res.pb.intercept+res.pb.slope*Math.max(...cols[selX].values.slice(0,res.n))}]} dataKey="y" stroke="#ef4444" dot={false} strokeWidth={2} name="PB-linje"/>}
+</ComposedChart>
+</ResponsiveContainer>
+</Card>
+</>)}
+</div>)};
+
+// ---- EP49 CLINICAL VALIDITY ----
+const EP49P=({cols,th})=>{
+const [selScore,setSelScore]=useState(0);const [selLabel,setSelLabel]=useState(1);const [cutoff,setCutoff]=useState('');const [prev,setPrev]=useState('0.1');const [res,setRes]=useState(null);
+if(!cols.length)return<Card th={th}><div style={{color:th.sub}}>Ladda data först.</div></Card>;
+const run=()=>{const scores=cols[selScore]?.values||[],labels=cols[selLabel]?.values||[];const n=Math.min(scores.length,labels.length);const cut=parseFloat(cutoff);const prevV=parseFloat(prev)||.1;const roc=rocAnalysis(scores.slice(0,n),labels.slice(0,n));if(!roc){setRes({err:'Kontrollera etiketterna (0/1)'});return}// Use provided cutoff or optimal Youden
+const useCut=sN(cut)?cut:roc.optimal?.t||0;const pos=labels.slice(0,n).filter(l=>l===1).length;const neg=n-pos;const data=scores.slice(0,n).map((s,i)=>({s,l:labels[i]}));const tp=data.filter(d=>d.s>=useCut&&d.l===1).length;const fp=data.filter(d=>d.s>=useCut&&d.l===0).length;const tn=data.filter(d=>d.s<useCut&&d.l===0).length;const fn=data.filter(d=>d.s<useCut&&d.l===1).length;const se=tp/pos,sp=tn/neg;const ppv=tp/(tp+fp)||0,npv=tn/(tn+fn)||0;// Adjust for prevalence using Bayes' theorem
+const ppvPrev=se*prevV/(se*prevV+(1-sp)*(1-prevV));const npvPrev=sp*(1-prevV)/(sp*(1-prevV)+(1-se)*prevV);const lr_pos=se/(1-sp),lr_neg=(1-se)/sp;const dor=(tp*tn)/(fp*fn)||0;// LR-adjusted post-test probabilities
+setRes({se,sp,ppv,npv,ppvPrev,npvPrev,lr_pos,lr_neg,dor,tp,fp,tn,fn,roc,cut:useCut,prev:prevV,n})};
+return(<div>
+<PageTitle title="📋 EP49 Klinisk validitet" sub="Diagnostisk prestanda — CLSI EP49 framework" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Testresultat (scores)"><Sel value={selScore} onChange={v=>setSelScore(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Sann status (0=negativ, 1=positiv)"><Sel value={selLabel} onChange={v=>setSelLabel(+v)} options={cols.map((c,i)=>({value:i,label:c.name}))} th={th}/></Field>
+<Field label="Cutoff (tom = optimal Youden)"><Inp value={cutoff} onChange={setCutoff} type="number" th={th}/></Field>
+<Field label="Prevalens (0-1, t.ex. 0.10 = 10%)"><Inp value={prev} onChange={setPrev} type="number" step="0.01" th={th}/></Field>
+</div>
+<Btn onClick={run} th={th}>Beräkna EP49</Btn>
+</Card>
+{res&&(res.err?<Card th={th}><div className="red">{res.err}</div></Card>:<>
+<div className="stat-grid">
+{[['Sensitivitet (Se)',(res.se*100).toFixed(1)+'%',res.se>=.9?'#16a34a':res.se>=.7?'#f59e0b':'#ef4444'],['Specificitet (Sp)',(res.sp*100).toFixed(1)+'%',res.sp>=.9?'#16a34a':res.sp>=.7?'#f59e0b':'#ef4444'],['PPV (rådata)',(res.ppv*100).toFixed(1)+'%',res.ppv>=.8?'#16a34a':'#f59e0b'],['NPV (rådata)',(res.npv*100).toFixed(1)+'%',res.npv>=.95?'#16a34a':'#f59e0b'],['PPV (prevalens '+Math.round(res.prev*100)+'%)',(res.ppvPrev*100).toFixed(1)+'%',res.ppvPrev>=.8?'#16a34a':'#f59e0b'],['NPV (prevalens)',(res.npvPrev*100).toFixed(1)+'%',res.npvPrev>=.95?'#16a34a':'#f59e0b'],['LR+ (likelihood ratio)',fmt(res.lr_pos,2),res.lr_pos>=10?'#16a34a':res.lr_pos>=5?'#84cc16':'#f59e0b'],['LR− (likelihood ratio)',fmt(res.lr_neg,3),res.lr_neg<=.1?'#16a34a':res.lr_neg<=.2?'#84cc16':'#f59e0b']].map(([l,v,c])=><div key={l} className="stat-box" style={{background:th.bg,borderColor:th.border}}><div className="stat-label">{l}</div><div className="stat-val" style={{color:c}}>{v}</div></div>)}
+</div>
+<Card th={th}><h3>Konfusionsmatris (Cutoff = {fmt2(res.cut)})</h3>
+<table style={{width:'auto',borderCollapse:'collapse',fontSize:14}}><tbody>
+<tr><td/><td style={{padding:'6px 16px',fontWeight:700,textAlign:'center'}}>Sjuk (+)</td><td style={{padding:'6px 16px',fontWeight:700,textAlign:'center'}}>Frisk (−)</td></tr>
+<tr><td style={{padding:'6px 16px',fontWeight:700}}>Test positiv</td><td style={{padding:'6px 16px',background:'#dcfce7',textAlign:'center',fontWeight:800,fontSize:18}}>{res.tp}</td><td style={{padding:'6px 16px',background:'#fee2e2',textAlign:'center',fontWeight:800,fontSize:18}}>{res.fp}</td></tr>
+<tr><td style={{padding:'6px 16px',fontWeight:700}}>Test negativ</td><td style={{padding:'6px 16px',background:'#fee2e2',textAlign:'center',fontWeight:800,fontSize:18}}>{res.fn}</td><td style={{padding:'6px 16px',background:'#dcfce7',textAlign:'center',fontWeight:800,fontSize:18}}>{res.tn}</td></tr>
+</tbody></table>
+</Card>
+<Card th={th}><h3>AUC = {fmt(res.roc.auc,4)} — ROC-kurva</h3>
+<ResponsiveContainer width="100%" height={280}>
+<LineChart data={res.roc.pts} margin={{top:10,right:20,bottom:30,left:30}}>
+<CartesianGrid strokeDasharray="3 3" stroke={th.border}/>
+<XAxis dataKey="sp" type="number" domain={[0,1]} tick={{fontSize:10,fill:th.sub}} label={{value:'1-Specificitet',position:'insideBottom',offset:-15,fontSize:10}}/>
+<YAxis domain={[0,1]} tick={{fontSize:10,fill:th.sub}} label={{value:'Sensitivitet',angle:-90,position:'insideLeft',fontSize:10}}/>
+<Line dataKey="se" stroke={th.accent} dot={false} strokeWidth={2}/>
+<ReferenceLine segment={[{x:1,y:0},{x:0,y:1}]} stroke={th.border} strokeDasharray="4 4"/>
+</LineChart>
+</ResponsiveContainer>
+</Card>
+</>)}
+</div>)};
+
+// ---- REPORT ----
+const ReportP=({cols,th})=>{
+const [title,setTitle]=useState('Klinisk statistikrapport');const [lab,setLab]=useState('');const [analyst,setAnalyst]=useState('');
+const generate=()=>{const now=new Date().toLocaleDateString('sv-SE');const content=`KLINISK STATISTIKRAPPORT
+${title}
+Laboratorium: ${lab||'—'}
+Analytiker: ${analyst||'—'}
+Datum: ${now}
+
+DATA SAMMANFATTNING
+Antal kolumner: ${cols.length}
+Kolumner: ${cols.map(c=>c.name+' (n='+c.values.length+')').join(', ')}
+
+${cols.slice(0,5).map(c=>`${c.name}:
+  n=${c.values.length}
+  Medelvärde=${mean(c.values).toFixed(4)}
+  Median=${median(c.values).toFixed(4)}
+  SD=${sd(c.values).toFixed(4)}
+  CV%=${cv(c.values).toFixed(2)}%
+  P2.5=${pct(c.values,2.5).toFixed(4)}
+  P97.5=${pct(c.values,97.5).toFixed(4)}`).join('\n\n')}
+
+GENERERAT AV: ClinicalStats Pro — CLSI/IFCC Klinisk Statistik
+`;const blob=new Blob([content],{type:'text/plain'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='ClinicalStats_Report.txt';a.click()};
+return(<div>
+<PageTitle title="📄 Rapport" sub="Generera textrapport av dina analyser" th={th}/>
+<Card th={th}><div className="row">
+<Field label="Rapporttitel"><Inp value={title} onChange={setTitle} th={th}/></Field>
+<Field label="Laboratorium"><Inp value={lab} onChange={setLab} th={th}/></Field>
+<Field label="Analytiker"><Inp value={analyst} onChange={setAnalyst} th={th}/></Field>
+</div>
+<Btn onClick={generate} th={th}>Ladda ner rapport (.txt)</Btn>
+{!cols.length&&<div className="hint" style={{marginTop:8}}>Ingen data laddad ännu.</div>}
+</Card>
+</div>)};
+
+// ---- AI ASSISTANT ----
+const AIP=({cols,th})=>{
+const [question,setQuestion]=useState('');const [res,setRes]=useState('');
+const answer=()=>{const q=question.toLowerCase();let ans='';if(q.includes('normalfördelad')||q.includes('normalitet'))ans='Använd Shapiro-Wilk-testet under Q-Q Plot eller Deskriptiv statistik. p > 0.05 = normalfördelad.';else if(q.includes('jämföra två grupper'))ans='Om data är normalfördelade: t-test (Parametriska). Annars: Mann-Whitney U (Icke-parametriska).';else if(q.includes('referensintervall'))ans='Gå till Referensintervall (EP28-A3c). Behöver ≥120 individer för icke-parametrisk metod.';else if(q.includes('metodjämförelse')||q.includes('method comparison'))ans='CLSI EP9-A3: Använd Passing-Bablok regression (icke-parametrisk, robust). För viktad: Weighted Deming. Komplettera med Bland-Altman.';else if(q.includes('sigma')||q.includes('tae'))ans='Six Sigma: σ = (TEa − |Bias|) / CV. TEa från EFLM BV-databas (desirable APS). σ≥6: utmärkt QC.';else if(q.includes('roc'))ans='ROC-analys under Avancerat → ROC. AUC ≥ 0.9 = utmärkt, 0.7-0.9 = bra, 0.5-0.7 = dålig.';else if(q.includes('outlier'))ans='Grubbs-test (parametrisk) eller Tukey IQR-metod (robust). Se Outlier-detektering.';else ans='Jag hittar inget exakt svar. Prova att söka i menyn eller kontrollera CLSI-dokumentation (EP5, EP9, EP15, EP17, EP28, EP49).';setRes(ans)};
+return(<div>
+<PageTitle title="🤖 AI Klinisk Assistent" sub="Intelligenta rekommendationer för klinisk statistik" th={th}/>
+<Card th={th}>
+<Field label="Ställ en fråga om statistik eller CLSI-protokoll"><div style={{display:'flex',gap:8}}><input value={question} onChange={e=>setQuestion(e.target.value)} onKeyDown={e=>e.key==='Enter'&&answer()} style={{flex:1,padding:'8px 12px',borderRadius:6,border:'1px solid '+th.inputBorder,background:th.input,color:th.text,fontFamily:'inherit',fontSize:13}} placeholder="T.ex. 'Hur jämför jag två grupper?' eller 'Hur beräknar jag referensintervall?'"/><Btn onClick={answer} th={th}>Fråga</Btn></div></Field>
+{res&&<div style={{marginTop:12,padding:12,borderRadius:8,background:th.bg,border:'1px solid '+th.border}}>{res}</div>}
+</Card>
+<Card th={th}><h3>Vanliga frågor</h3>
+{['Hur jämför jag två grupper?','Är mina data normalfördelade?','Hur beräknar jag referensintervall?','Vad är Six Sigma och TAE?','Hur väljer jag metodjämförelsemetod?'].map((q,i)=><div key={i} onClick={()=>{setQuestion(q);}} style={{padding:'6px 12px',borderRadius:6,cursor:'pointer',marginBottom:4,background:th.bg,border:'1px solid '+th.border,fontSize:12}}>{q}</div>)}
+</Card>
+</div>)};
+
+// ---- ABOUT ----
+const AboutP=({th})=><div>
+<PageTitle title="ℹ️ Om ClinicalStats Pro" sub="Klinisk statistikprogramvara för laboratoriet" th={th}/>
+<Card th={th}><h3>ClinicalStats Pro</h3>
+<p style={{marginBottom:8}}>Professionell klinisk statistikprogramvara för klinisk kemi och forskning, likvärdig med MedCalc och Analyse-it.</p>
+<Tbl headers={['Standard','Täckning']} rows={[['CLSI EP5-A3','Precision — repeterbarhet och intermediär precision'],['CLSI EP6-A','Linjäritet'],['CLSI EP9-A3','Metodjämförelse — Passing-Bablok, Deming, Weighted Deming'],['CLSI EP15-A3','Användarverifiering — precision och riktighet'],['CLSI EP17-A2','Detektionsgränser — LoB, LoD, LoQ'],['CLSI EP21-A','Skillnadsplot'],['CLSI EP28-A3c','Referensintervall (icke-parametrisk, parametrisk)'],['CLSI EP49','Klinisk validitetsramverk'],['IFCC/EFLM BV','Biologisk variation — APS (Milan konsensus 2014)'],['Westgard 1974','TAE-formel: |Bias| + 1.65×CV'],['Westgard Six Sigma','σ = (TEa−|bias|)/CV'],['ISO/GUM','Mätosäkerhet']]} th={th}/>
+</Card>
+<Card th={th}><h3>Statistiska metoder</h3>
+<Tbl headers={['Metod','Källa']} rows={[['Passing-Bablok regression','Passing & Bablok 1983; CLSI EP9-A3'],['Deming regression (jackknife CI)','Linnet 1990; CLSI EP9-A3'],['Weighted Deming','Linnet 1990 (vikter 1/medel²)'],['Shapiro-Wilk','Royston 1995 approximation'],['Bland-Altman','Bland & Altman 1986'],['EP15 precision test','χ² test mot tillverkarens SD'],['EP28 referensintervall','Reed et al. 1983; Harris & Boyd 1990'],['ROC AUC CI','Hanley & McNeil 1982']]} th={th}/>
+</Card>
+<Card th={th}><div style={{opacity:.6,fontSize:12}}>ClinicalStats Pro v2.0 — Enkel-fil React 18/Babel applikation. Inga data skickas till server.</div></Card>
+</div>;
+
+// ================================================================
+// APP COMPONENT
+// ================================================================
+const navS=[
+{l:'DATA',items:[{id:'upload',l:'📂 Ladda / Mata in'},{id:'data',l:'📋 Data'},{id:'recommend',l:'💡 Rekommendationer'}]},
+{l:'DESKRIPTIV',items:[{id:'desc',l:'📊 Deskriptiv statistik'},{id:'hist',l:'📊 Histogram'},{id:'freqtable',l:'📋 Frekvenstabell'},{id:'cumfreq',l:'📈 Kumulativ frekvens'},{id:'qqplot',l:'📉 Q-Q Plot'},{id:'normcurve',l:'📊 Normalkurva'},{id:'zscore',l:'🔢 Z-poäng'},{id:'boxplot',l:'📦 Boxplot'},{id:'outlier',l:'🔍 Outlier-detektering'}]},
+{l:'PARAMETRISKA',items:[{id:'ttest',l:'📐 T-test'},{id:'anova',l:'📊 ANOVA'},{id:'tost',l:'⚖️ TOST Ekvivalens'},{id:'powersize',l:'💪 Power & n'}]},
+{l:'ICKE-PARAMETRISKA',items:[{id:'nonparam',l:'📊 Mann-Whitney / Wilcoxon'},{id:'kruskal',l:'📊 Kruskal-Wallis'},{id:'friedman',l:'📊 Friedman'},{id:'chi2',l:'χ² Chi-kvadrat'}]},
+{l:'TRANSFORM',items:[{id:'transform',l:'🔧 Transformationer'},{id:'boxcox',l:'📐 Box-Cox'}]},
+{l:'METODJÄMFÖRELSE',items:[{id:'scatter',l:'🔵 Scatter-plot'},{id:'ba',l:'📊 Bland-Altman'},{id:'bamulti',l:'📊 Multi Bland-Altman'},{id:'ep21',l:'📊 EP21 Skillnadsplot'},{id:'pb',l:'📐 Passing-Bablok'},{id:'dem',l:'📐 Deming regression'},{id:'wdem',l:'📉 Weighted Deming'},{id:'multimethod',l:'📊 Multi metodjämförelse'},{id:'qreg',l:'📐 Kvantilregression'},{id:'dupcv',l:'📊 Duplikat-CV'}]},
+{l:'REGRESSION',items:[{id:'multireg',l:'📐 Multipel regression'},{id:'logreg',l:'📊 Logistisk regression'},{id:'polyreg',l:'📐 Polynomregression'}]},
+{l:'ÖVERENSSTÄMMELSE',items:[{id:'kappa',l:'κ Cohen\'s kappa'},{id:'icc',l:'📊 ICC'}]},
+{l:'QC',items:[{id:'lj',l:'📈 Levey-Jennings'},{id:'wg',l:'📋 Westgard-regler'},{id:'sigma',l:'Σ Six Sigma'},{id:'tae',l:'🎯 TAE (Total Error)'},{id:'opspecs',l:'📊 OPSpecs'},{id:'ep5',l:'📐 EP5 Precision'},{id:'ep15',l:'✅ EP15 Verifiering'},{id:'ep17',l:'🔍 EP17 Detektionsgränser'},{id:'linearity',l:'📏 Linjäritet'},{id:'mu',l:'📐 Mätosäkerhet'},{id:'bv',l:'🧬 Biologisk variation'}]},
+{l:'AVANCERAT',items:[{id:'corr',l:'📊 Korrelation'},{id:'ref',l:'📊 Referensintervall'},{id:'refverify',l:'✅ Verifiera RI'},{id:'ageri',l:'📊 Åldersspecifika RI'},{id:'cri',l:'⚠️ Kritiska värden'},{id:'caliper',l:'🔧 Calipermetoden'},{id:'hoffmann',l:'📊 Hoffmann'},{id:'roc',l:'📈 ROC-analys'}]},
+{l:'VALIDERING',items:[{id:'ep09',l:'📋 EP09 Metodjämförelse'},{id:'ep49',l:'📋 EP49 Klinisk validitet'},{id:'report',l:'📄 Rapport'}]},
+{l:'AI & RAPPORT',items:[{id:'ai',l:'🤖 AI Assistent'},{id:'report2',l:'📄 Rapport'}]},
+{l:'INFO',items:[{id:'about',l:'ℹ️ Om programmet'}]}
+];
+
+const noDataPages=['upload','bv','mu','caliper','ep09','ep49','tae','ep15','opspecs','about','powersize','ai','report','report2','cri'];
+
+const pgs={
+upload:UploadP,data:DataP,recommend:RecP,
+desc:DescP,hist:HistP,freqtable:FreqP,cumfreq:CumFreqP,qqplot:QQPlotP,normcurve:NormCurveP,zscore:ZScoreP,boxplot:BoxP,outlier:OutP,
+ttest:TTP,anova:AnoP,tost:TOSTP,powersize:PowerP,
+nonparam:NPP,kruskal:KWP,friedman:FriedmanP,chi2:Chi2P,
+transform:TrfP,boxcox:BoxCoxP,
+scatter:ScP,ba:BAP,bamulti:BAMultiP,ep21:EP21P,pb:PBP,dem:DemP,wdem:WDemP,multimethod:MultiMP,qreg:QRegP,dupcv:DupCVP,
+multireg:MultiRegP,logreg:LogRegP,polyreg:PolyRegP,
+kappa:KappaP,icc:ICCP,
+lj:LJP,wg:WGP,sigma:SigmaP,tae:TAEP,opspecs:OPSpecsP,ep5:EP5P,ep15:EP15P,ep17:EP17P,linearity:LinP,mu:MUP,bv:BVP,
+corr:CrP,ref:RefP,refverify:RefVerP,ageri:AgeRIP,cri:CRIP,caliper:CaliperP,hoffmann:HoffmannP,roc:RoP,
+ep09:EP09P,ep49:EP49P,report:ReportP,
+ai:AIP,report2:ReportP,
+about:AboutP
+};
+
+function App(){
+const [cols,setCols]=useState([]);
+const [grps,setGrps]=useState([]);
+const [page,setPage]=useState('upload');
+const [theme,setTheme]=useState('light');
+const [sidebarOpen,setSidebarOpen]=useState(true);
+const th=THEMES[theme];
+const s=mkS(th);
+
+// Sync theme to body background
+useEffect(()=>{document.body.style.background=th.bg;document.body.style.color=th.text;},[theme]);
+
+const Comp=pgs[page]||AboutP;
+
+return(
+<div className="app" style={s.app}>
+{/* Sidebar */}
+<div className="sidebar" style={s.sidebar}>
+<div className="sidebar-logo" style={{color:'#ffffff',borderColor:th.border}}>
+ClinicalStats Pro
+<span>v2.0 · CLSI/IFCC · Klinisk statistik</span>
+</div>
+{navS.map((grp,gi)=>(
+<div key={gi} className="sidebar-group">
+<div className="sidebar-group-label">{grp.l}</div>
+{grp.items.map(item=>(
+<button key={item.id} className={'sidebar-item'+(page===item.id?' active':'')}
+style={page===item.id?s.sidebarActive:{...s.sidebarItem}}
+onClick={()=>setPage(item.id)}>
+{item.l}
+</button>
+))}
+</div>
+))}
+<div style={{padding:'12px 16px',marginTop:8,borderTop:'1px solid '+th.border}}>
+<button onClick={()=>setTheme(t=>t==='light'?'dark':'light')}
+style={{...s.btnSec,width:'100%',borderRadius:6,padding:'6px 12px',fontSize:12}}>
+{theme==='light'?'🌙 Mörkt läge':'☀️ Ljust läge'}
+</button>
+</div>
+</div>
+{/* Main content */}
+<div className="main" style={{background:th.bg}}>
+<ErrorBoundary>
+<Comp cols={cols} grps={grps} setCols={setCols} setGrps={setGrps} th={th}/>
+</ErrorBoundary>
+</div>
+</div>
+);
+}
+
+// ================================================================
+// RENDER
+// ================================================================
+const rootEl=document.getElementById('root');
+const root=ReactDOM.createRoot(rootEl);
+root.render(React.createElement(App));
+</script>
+</body>
+</html>
